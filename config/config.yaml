@@ -4,6 +4,8 @@ symbols:
 timeframes:
   - 15m
 
+start_date: "2018-01-01"
+
 exchange: binance
 limit: 1000
 output_path: data/
