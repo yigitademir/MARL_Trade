@@ -1,70 +1,95 @@
-# investigate_gaps.py
-
+import os
 import pandas as pd
 import ccxt
 from datetime import datetime, timezone
 
-# === Step 1: Load your data ===
-file_path = "data/BTCUSDT_15m.parquet"
-df = pd.read_parquet(file_path)
-df["timestamp"] = pd.to_datetime(df["timestamp"])
+# === Config ===
+DATA_FOLDER = "data"
+EXPECTED_DELTAS = {
+    "5m": pd.Timedelta(minutes=5),
+    "15m": pd.Timedelta(minutes=15),
+    "1h": pd.Timedelta(hours=1),
+    "4h": pd.Timedelta(hours=4),
+}
 
-print(f"\n✅ Loaded {len(df)} rows from {file_path}")
-print(f"🕒 Date range: {df['timestamp'].min()} → {df['timestamp'].max()}")
+def get_expected_delta_from_filename(filename):
+    for tf in EXPECTED_DELTAS:
+        if f"_{tf}" in filename:
+            return EXPECTED_DELTAS[tf]
+    return None
 
-# === Step 2: Compute time gaps ===
-df = df.sort_values("timestamp")
-df["gap"] = df["timestamp"].diff()
+def investigate_file(filepath):
+    print(f"\n📂 Investigating: {filepath}")
 
-# Expected delta for 15-minute candles
-expected_delta = pd.Timedelta(minutes=15)
-gap_violations = df[df["gap"] != expected_delta]
+    # Load data
+    df = pd.read_parquet(filepath)
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df = df.sort_values("timestamp")
 
-print(f"\n⚠️ Found {len(gap_violations)} time gaps")
+    print(f"✅ Loaded {len(df)} rows")
+    print(f"🕒 Range: {df['timestamp'].min()} → {df['timestamp'].max()}")
 
-# === Step 3: Show top 5 gap violations ===
-print("\n🔍 Top 5 gap violations:")
-print(gap_violations[["timestamp", "gap"]].head())
+    # Compute time deltas
+    df["gap"] = df["timestamp"].diff()
 
-# === Step 4: Investigate the first gap ===
-if not gap_violations.empty:
-    # Skip the first gap if it’s just the first row (NaT)
+    expected_delta = get_expected_delta_from_filename(filepath)
+    if expected_delta is None:
+        print("⚠️ Could not determine expected delta from filename. Skipping.")
+        return
+
+    gap_violations = df[df["gap"] != expected_delta]
+
+    if len(gap_violations) == 0:
+        print("✅ No time gaps detected.")
+        return
+
+    print(f"⚠️ {len(gap_violations)} time gaps found.")
+    print("🔍 Top 5 gap violations:")
+    print(gap_violations[["timestamp", "gap"]].head())
+
+    # Skip NaT row
     gap_violations = gap_violations[gap_violations.index != 0]
+    if gap_violations.empty:
+        print("ℹ️ Only first row has gap (NaT), no real gaps to inspect.")
+        return
 
-    if not gap_violations.empty:
-        gap_row = gap_violations.iloc[0]
-        gap_index = gap_row.name
+    # Investigate the first real gap
+    gap_row = gap_violations.iloc[0]
+    gap_index = gap_row.name
 
     if gap_index == 0:
-        print("\n⚠️ First row has no previous timestamp — skipping this gap.")
-    else:
-        prev_timestamp = df.loc[gap_index - 1, "timestamp"]
-        curr_timestamp = gap_row["timestamp"]
+        print("⚠️ First row — no previous candle to compare. Skipping.")
+        return
 
-        print(f"\n🔬 Investigating first gap:")
-        print(f"  Start: {prev_timestamp}")
-        print(f"  End:   {curr_timestamp}")
-        print(f"  Missing approx. {(curr_timestamp - prev_timestamp) / expected_delta:.0f} candles")
+    prev_ts = df.loc[gap_index - 1, "timestamp"]
+    curr_ts = gap_row["timestamp"]
 
-        # === Step 5: Try refetching from Binance ===
-        exchange = ccxt.binance()
-        symbol = "BTC/USDT"
-        timeframe = "15m"
+    print(f"\n🔬 Investigating first gap:")
+    print(f"  Start: {prev_ts}")
+    print(f"  End:   {curr_ts}")
+    print(f"  Missing approx. {(curr_ts - prev_ts) / expected_delta:.0f} candles")
 
-        since_ts = int(prev_timestamp.replace(tzinfo=timezone.utc).timestamp() * 1000)
-        limit = 100  # fetch up to 100 candles
+    # Fetch from Binance to see if missing candles are available
+    exchange = ccxt.binance()
+    symbol = filepath.split("/")[-1].split("_")[0]
+    symbol = symbol.replace("USDT", "/USDT")
+    timeframe = [tf for tf in EXPECTED_DELTAS if f"_{tf}" in filepath][0]
 
-        print(f"\n📡 Fetching from Binance between {prev_timestamp} and {curr_timestamp}...")
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since_ts, limit=limit)
+    since_ts = int(prev_ts.replace(tzinfo=timezone.utc).timestamp() * 1000)
 
-        df_gap = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
-        df_gap["timestamp"] = pd.to_datetime(df_gap["timestamp"], unit="ms")
+    print(f"\n📡 Fetching from Binance: {symbol} @ {timeframe}")
+    ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since_ts, limit=100)
 
-        # Show only relevant part
-        df_gap_filtered = df_gap[df_gap["timestamp"] < curr_timestamp]
+    df_gap = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
+    df_gap["timestamp"] = pd.to_datetime(df_gap["timestamp"], unit="ms")
 
-        print(f"\n🔎 Candles returned by Binance:")
-        print(df_gap_filtered)
+    df_gap_filtered = df_gap[df_gap["timestamp"] < curr_ts]
 
-        print(f"\n🧮 Candles received: {len(df_gap_filtered)}")
-        print(f"🧮 Expected: {(curr_timestamp - prev_timestamp) / expected_delta:.0f}")
+    print(f"\n🔎 Binance returned {len(df_gap_filtered)} candles (expected: {(curr_ts - prev_ts) / expected_delta:.0f})")
+    print(df_gap_filtered[["timestamp", "open", "close"]])
+
+# === Run for all .parquet files ===
+for file in os.listdir(DATA_FOLDER):
+    if file.endswith(".parquet") and file != ".gitkeep":
+        filepath = os.path.join(DATA_FOLDER, file)
+        investigate_file(filepath)
