@@ -4,7 +4,7 @@ symbols:
 timeframes:
   - 15m
 
-start_date: "2018-01-01"
+start_date: "2019-01-01"
 
 exchange: binance
 limit: 1000
