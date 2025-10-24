@@ -7,3 +7,5 @@ stable-baselines3
 gym
 matplotlib
 seaborn
+PyYAML
+pyarrow
