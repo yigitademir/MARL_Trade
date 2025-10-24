@@ -1,0 +1,9 @@
+pandas 
+numpy
+ta
+yfinance
+ccxt
+stable-baselines3
+gym
+matplotlib
+seaborn
