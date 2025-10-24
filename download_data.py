@@ -5,6 +5,7 @@ import pandas as pd
 from datetime import datetime, timezone
 import tqdm
 from utils.data_fetcher import fetch_ohlcv
+from utils.data_checker import check_data_file
 
 # Load configuration
 with open('config/config.yaml', 'r') as file:
@@ -12,13 +13,15 @@ with open('config/config.yaml', 'r') as file:
 
 symbols = config["symbols"]
 timeframes = config["timeframes"]
+start_date = config["start_date"]
 exchange_name = config.get("exchange")
 limit = config.get("limit")
 output_path = config.get("output_path")
 file_format = config.get("format")
 
+
 # Start date in milliseconds
-start_ts = int(datetime.strptime(config["start_date"], "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
+start_ts = int(datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
 
 # Initialize exchange
 exchange_class = getattr(ccxt, exchange_name)
@@ -38,7 +41,7 @@ for symbol in symbols:
         # Determine start timestamp
         if os.path.exists(filepath):
             print(f"Resuming from existing file {filename}")
-            df_existing = pd.read_parquet(filepath) if file_format == "parquet" else pd.read_csv(filename)
+            df_existing = pd.read_parquet(filepath) if file_format == "parquet" else pd.read_csv(filepath)
             df_existing["timestamp"] = pd.to_datetime(df_existing["timestamp"])
             last_ts = int(df_existing["timestamp"].max().timestamp() * 1000) + 1
         else:
@@ -50,17 +53,31 @@ for symbol in symbols:
 
         if df_new.empty:
             print("No new data to fetch.")
-            continue
-
-        # Merge new data with existing data
-        if df_existing is not None:
-            df = pd.concat([df_existing, df_new]).drop_duplicates("timestamp").sort_values("timestamp")
+            df = df_existing
         else:
-            df = df_new
+            # Merge new data with existing
+            if df_existing is not None:
+                df = pd.concat([df_existing, df_new]).drop_duplicates("timestamp").sort_values("timestamp")
+            else:
+                df = df_new
 
-        if file_format == "csv":
-            df.to_csv(filepath, index=False)
-        else:
-            df.to_parquet(filepath, index=False)
+            # Trim dates before start date
+            start_date_ts = pd.to_datetime(start_date)
+            df = df[df["timestamp"] >= start_date_ts]
 
-        print(f"Saved to {filepath}")
+            # Save file
+            if file_format == "csv":
+                df.to_csv(filepath, index=False)
+            else:
+                df.to_parquet(filepath, index=False)
+
+            print(f"Saved to {filepath}")
+
+            if "m" in tf:
+                tf_minutes = int(tf.replace("m", ""))
+            elif "h" in tf:
+                tf_minutes = int(tf.replace("h", "")) * 60
+            else:
+                tf_minutes = None
+
+            check_data_file(filepath, expected_timeframe_minutes=tf_minutes)
