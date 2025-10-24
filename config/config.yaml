@@ -2,7 +2,10 @@ symbols:
   - BTC/USDT
 
 timeframes:
+  - 5m
   - 15m
+  - 1h
+  - 4h
 
 start_date: "2019-01-01"
 
