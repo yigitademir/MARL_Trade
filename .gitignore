@@ -10,10 +10,6 @@ __pycache__/
 *.parquet
 *.csv
 
-# Ignore data directory contents
-/data/*
-!data/.gitkeep  # keep folder itself in repo (optional)
-
 # Distribution / packaging
 .Python
 build/
