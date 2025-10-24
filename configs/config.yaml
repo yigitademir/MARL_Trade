@@ -1,0 +1,12 @@
+symbols:
+  - BTC/USDT
+  - ETH/USDT
+
+timeframes:
+  - 15m
+  - 1h
+
+exchange: binance
+limit: 1000
+output_path: data/
+format: parquet
