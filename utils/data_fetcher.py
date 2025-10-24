@@ -4,6 +4,7 @@ import time
 
 def fetch_ohlcv(exchange, symbol, timeframe, since=None, limit=1000):
     all_data = []
+    
     while True:
         data = exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=limit)
         if not data:
@@ -13,7 +14,8 @@ def fetch_ohlcv(exchange, symbol, timeframe, since=None, limit=1000):
         time.sleep(exchange.rateLimit / 1000) # Respect rate limit
         if len(data) < limit:
             break
+    
     df = pd.DataFrame(all_data, columns = ["timestamp", "open", "high", "low", "close", "volume"])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-
+    
     return df
