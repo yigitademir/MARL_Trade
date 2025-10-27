@@ -112,14 +112,15 @@ def generate_all_features(
     """
     # === Parse symbol and timeframe from filename ===
     base = os.path.basename(filename).replace(".parquet", "")
-    tf = base[-3:] if base[-3] in "mh" else base[-2:]
-    symbol_part = base.replace(f"_{tf}", "")
+    parts = base.split("_")
+    symbol_part = "_".join(parts[:-1])
+    tf = parts[-1]
 
     # === Run standard pipeline ===
     df = generate_log_returns(df)
     df = add_ema(df, spans=[10, 50])
     df = add_rsi(df, period=14)
-    df = add_rolling_volatility(df, window=20)
+    df = add_rolling_volatility(df, period=20)
     df = normalize_features(df)
 
     # === Save using config ===
