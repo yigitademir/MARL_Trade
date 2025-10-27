@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import os
 
 def generate_log_returns(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -116,7 +117,7 @@ def generate_all_features(
 
     # === Run standard pipeline ===
     df = generate_log_returns(df)
-    df = add_ema_features(df, spans=[10, 50])
+    df = add_ema(df, spans=[10, 50])
     df = add_rsi(df, period=14)
     df = add_rolling_volatility(df, window=20)
     df = normalize_features(df)
