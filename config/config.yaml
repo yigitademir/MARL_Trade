@@ -11,5 +11,6 @@ start_date: "2019-01-01"
 
 exchange: binance
 limit: 1000
-output_path: data/
+raw_output_path: data/
+feature_output_path: data/processed/
 format: parquet
