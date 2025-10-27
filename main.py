@@ -53,9 +53,24 @@ for symbol in symbols:
         # Fetch from last timestamp
         df_new = fetch_ohlcv(exchange, symbol, tf, since=last_ts, limit=limit, show_progress=True)
 
+        # Flag for feature generating
+        should_generate_features = False
+
         if df_new.empty:
             print("No new data to fetch.")
             df = df_existing
+
+            # Check for processed file
+            symbol_clean = symbol.replace("/","")
+            features_filename = f"{symbol_clean}_{tf}_features.{file_format}"
+            features_path = os.path.join(feature_output_path, features_filename)
+
+            if not os.path.exists(features_path):
+                print("No features file found, will generate from existing file.")
+                should_generate_features = True
+            else:
+                print("Feature file already exists.")
+
         else:
             # Merge new data with existing
             if df_existing is not None:
@@ -74,12 +89,13 @@ for symbol in symbols:
                 df.to_parquet(filepath, index=False)
 
             print(f"Saved to {filepath}")
+            should_generate_features = True
 
-            # Check data quality
+            # Check time gaps
             tf_minutes = int(tf.replace("m","")) if "m" in tf else int(tf.replace("h","")) * 60
             check_data_file(filepath, expected_timeframe_minutes=tf_minutes)
 
             # Feature generation
-            if df is not None and not df.empty:
+            if should_generate_features and df is not None and not df.empty:
                 print("Generating features")
                 generate_all_features(df, filename, config)
