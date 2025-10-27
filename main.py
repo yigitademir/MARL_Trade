@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import tqdm
 from utils.data_fetcher import fetch_ohlcv
 from utils.data_checker import check_data_file
+from utils.features import generate_all_features
 
 # Load configuration
 with open('config/config.yaml', 'r') as file:
@@ -16,9 +17,9 @@ timeframes = config["timeframes"]
 start_date = config["start_date"]
 exchange_name = config.get("exchange")
 limit = config.get("limit")
-output_path = config.get("output_path")
+raw_output_path = config.get("raw_output_path")
+feature_output_path = config.get("feature_output_path")
 file_format = config.get("format")
-
 
 # Start date in milliseconds
 start_ts = int(datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
@@ -28,13 +29,14 @@ exchange_class = getattr(ccxt, exchange_name)
 exchange = exchange_class()
 
 # Ensure output directory exists
-os.makedirs(output_path, exist_ok=True)
+os.makedirs(raw_output_path, exist_ok=True)
+os.makedirs(feature_output_path, exist_ok=True)
 
 # Loop over symbols and timeframes
 for symbol in symbols:
     for tf in timeframes:
         filename = symbol.replace("/", "") + f"_{tf}.{file_format}"
-        filepath = os.path.join(output_path, filename)
+        filepath = os.path.join(raw_output_path, filename)
         
         print(f"Fetching {symbol} @ {tf}")
 
@@ -73,11 +75,11 @@ for symbol in symbols:
 
             print(f"Saved to {filepath}")
 
-            if "m" in tf:
-                tf_minutes = int(tf.replace("m", ""))
-            elif "h" in tf:
-                tf_minutes = int(tf.replace("h", "")) * 60
-            else:
-                tf_minutes = None
-
+            # Check data quality
+            tf_minutes = int(tf.replace("m","")) if "m" in tf else int(tf.replace("h","")) * 60
             check_data_file(filepath, expected_timeframe_minutes=tf_minutes)
+
+            # Feature generation
+            if df is not None and not df.empty:
+                print("Generating features")
+                generate_all_features(df, filename, config)
