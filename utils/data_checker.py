@@ -41,11 +41,3 @@ def check_data_file(filepath, expected_timeframe_minutes=None):
         print(f"Time gaps detected")
     else:
         print(f"All time intervals are consistent, {expected_timeframe_minutes}")
-    
-
-
-
-
-
-
-
