@@ -65,3 +65,68 @@ def create_directories(args):
     os.makedirs(f"{args.output_dir}/final", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
     os.makedirs("logs/tensorboard", exist_ok=True)
+
+# === Data Handling ===
+def load_data(args):
+    """
+    Load processed feature data from disk.
+    
+    1. Constructs the filename from symbol and timeframe
+    2. Loads the parquet file
+    3. Validates the data
+    4. Returns the dataframe
+    
+    Args:
+        args: Parsed command-line arguments
+        
+    Returns:
+        pd.DataFrame: Loaded feature data
+    """
+
+    # Construct filename
+    filename = f"{args.symbol}_{args.timeframe}_features.parquet"
+    filepath = os.path.join(args.data_path, filename)
+
+    print("\n" + "="*70)
+    print("LOADING DATA")
+    print("="*70)
+    print(f"Symbol: {args.symbol}")
+    print(f"Timeframe: {args.timeframe}")
+    print(f"File: {filepath}")
+
+    # Check if File exists
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"Data file not found: {filepath}\n Did you run main.py?")
+    
+    # Load data
+    df = pd.read_parquet(filepath)
+    print("Data Loaded")
+    print(f"\n Data Statistics:") 
+    print(f"Total candles: {len(df):,}")
+    print(f"Date range: {df['timestamp'].min()} → {df['timestamp'].max()}")
+    print(f"Duration: {(df['timestamp'].max() - df['timestamp'].min()).days} days")
+    print(f"Features: {len(df.columns)} columns")
+    print(f"\nFirst 3 rows:")
+    print(df.head(3))
+
+    return df
+
+def split_data(df, train_rate = 0.7, val_ratio = 0.15):
+    """
+    Split data into train, validation, and test sets.
+    
+    IMPORTANT: We use TIME-BASED splitting, NOT random!
+    
+    Why?
+    - Random split = Data leakage (future info in training)
+    - Time-based = Realistic (train on past, test on future)
+    
+    Args:
+        df: Full dataset
+        train_ratio: Proportion for training (default: 0.7 = 70%)
+        val_ratio: Proportion for validation (default: 0.15 = 15%)
+        # test_ratio is implicit: 1 - train - val = 0.15 (15%)
+        
+    Returns:
+        tuple: (train_df, val_df, test_df)
+    """
