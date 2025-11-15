@@ -154,6 +154,11 @@ class TradingEnv(gym.Env):
                 reward = profit - cost
         
         # action == 0 (HOLD) - no action taken
+
+        if action == 0:
+            if self.position == 0:
+                # Penalty for sitting idle
+                reward -= 0.1
         
         # ============================================
         # UNREALIZED P&L (for open positions)
@@ -166,7 +171,14 @@ class TradingEnv(gym.Env):
             unrealized_pnl = self.entry_price - current_price
         
         # Add unrealized P&L to reward (encourage holding winners)
-        reward += unrealized_pnl * 0.01  # Small weight to not dominate
+        if action == 0 and self.position != 0:
+            if unrealized_pnl > 0:
+                reward += unrealized_pnl * 0.02 # Bonus for holding winners
+            elif unrealized_pnl < -100:
+                reward -= 0.5 # Penalty for holding big losers
+
+        else:
+            reward += unrealized_pnl * 0.01 # Reward for normal unrealized PnL
         
         # ============================================
         # RISK-ADJUSTED METRICS
