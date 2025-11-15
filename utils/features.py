@@ -99,31 +99,78 @@ def save_feature_dataset(
 
     print(f"Features saved to: {filepath}")
 
-def generate_all_features(
-    df: pd.DataFrame,
-    filename: str,
-    config: dict
-) -> pd.DataFrame:
+def clean_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Full feature pipeline using filename + config for symbol, tf, etc.
-    - Parses symbol and timeframe from filename
-    - Loads save path and format from config
-    - Calls generate_all_features and save_feature_dataset
+    Clean features: handle NaN, inf, and extreme values.
     """
-    # === Parse symbol and timeframe from filename ===
-    base = os.path.basename(filename).replace(".parquet", "")
+    df = df.copy()
+    
+    print(" Cleaning features...")
+    
+    # 1. Forward fill NaN values (use previous valid value)
+    df = df.fillna(method='ffill')
+    
+    # 2. Backward fill remaining NaN (for start of series)
+    df = df.fillna(method='bfill')
+    
+    # 3. Replace any remaining NaN with 0
+    df = df.fillna(0)
+    
+    # 4. Replace infinity with large but finite values
+    df = df.replace([np.inf, -np.inf], [1e10, -1e10])
+    
+    # 5. Clip extreme values (prevent explosions)
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    for col in numeric_cols:
+        if col != 'timestamp':
+            # Clip to reasonable range
+            mean = df[col].mean()
+            std = df[col].std()
+            if std > 0:
+                # Keep values within ±10 standard deviations
+                df[col] = df[col].clip(mean - 10*std, mean + 10*std)
+    
+    # 6. Final safety check
+    nan_count = df.isnull().sum().sum()
+    inf_count = np.isinf(df.select_dtypes(include=[np.number])).sum().sum()
+    
+    print(f"NaN remaining: {nan_count}")
+    print(f"Inf remaining: {inf_count}")
+    
+    if nan_count > 0 or inf_count > 0:
+        print(" WARNING: Still have invalid values, replacing with 0")
+        df = df.fillna(0)
+        df = df.replace([np.inf, -np.inf], 0)
+    
+    print("Features cleaned")
+    
+    return df
+
+def generate_all_features(df: pd.DataFrame, filename: str, config: dict) -> pd.DataFrame:
+    """
+    Full feature pipeline with cleaning!
+    """
+    import os
+    
+    # Parse symbol and timeframe from filename
+    base = os.path.basename(filename).replace(".parquet", "").replace(".csv", "")
     parts = base.split("_")
     symbol_part = "_".join(parts[:-1])
     tf = parts[-1]
-
-    # === Run standard pipeline ===
+    
+    print(f"Generating features for {symbol_part} {tf}...")
+    
+    # Generate features
     df = generate_log_returns(df)
     df = add_ema(df, spans=[10, 50])
     df = add_rsi(df, period=14)
     df = add_rolling_volatility(df, period=20)
     df = normalize_features(df)
-
-    # === Save using config ===
+    
+    # CRITICAL: Clean features!
+    df = clean_features(df)
+    
+    # Save
     save_feature_dataset(
         df,
         symbol=symbol_part,
@@ -131,9 +178,8 @@ def generate_all_features(
         output_dir=config.get("feature_output_path", "data/processed"),
         file_format=config.get("format", "parquet")
     )
-
+    
     return df
-
 def inspect_outliers(df:pd.DataFrame, threshold: float=3.0) -> pd.DataFrame:
     """
     Prints a summary of outliers falls outside of threshold for each normalized column
