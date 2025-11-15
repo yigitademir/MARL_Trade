@@ -417,7 +417,7 @@ def save_model(model, args):
         model_name = args.model_name
     else:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_name = f"{args.symbol}_{args.time_frame}_{timestamp}"
+        model_name = f"{args.symbol}_{args.timeframe}_{timestamp}"
 
     # Save 
     save_path = f"{args.output_dir}/final/{model_name}"

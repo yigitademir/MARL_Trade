@@ -212,6 +212,20 @@ class TradingEnv(gym.Env):
         }
         
         return obs, reward, terminated, truncated, info
+        # PREPARE OUTPUT
+        # ============================================
+        
+        obs = self._get_observation()
+        info = self._get_info()
+        info['trade_executed'] = trade_executed
+        info['action'] = action
+        info['reward_breakdown'] = {
+            'realized_pnl': reward if trade_executed else 0,
+            'unrealized_pnl': unrealized_pnl,
+            'drawdown_penalty': -self.max_drawdown * 10
+        }
+        
+        return obs, reward, terminated, truncated, info
     
     def _get_observation(self):
         """
@@ -232,7 +246,15 @@ class TradingEnv(gym.Env):
     def _get_info(self):
         """
         Get detailed info for logging/debugging.
+        Must include all keys that Monitor expects
         """
+        # Calculate Sharpe ratio if we have enough data
+        sharpe_ratio = 0.0
+        if len(self.returns_history) >= 20:
+            returns_array = np.array(self.returns_history[-20:])
+            if returns_array.std() > 0:
+                sharpe_ratio = returns_array.mean() / returns_array.std()
+        
         info = {
             "step": self.current_step,
             "balance": self.balance,
@@ -242,6 +264,7 @@ class TradingEnv(gym.Env):
             "winning_trades": self.winning_trades,
             "win_rate": self.winning_trades / max(1, self.total_trades),
             "max_drawdown": self.max_drawdown,
-            "roi": ((self.balance - self.initial_balance) / self.initial_balance) * 100
+            "roi": ((self.balance - self.initial_balance) / self.initial_balance) * 100,
+            "sharpe_ratio": sharpe_ratio  # ✅ Add this!
         }
         return info
