@@ -1,6 +1,6 @@
-import gymnasium as gym
 import numpy as np
 import pandas as pd
+import gymnasium as gym
 from gymnasium import spaces
 
 class TradingEnv(gym.Env):
@@ -36,7 +36,6 @@ class TradingEnv(gym.Env):
         # Assuming features are all columns except timestamp
         n_features = len(df.columns) - 1  # exclude timestamp
         
-        # FIX: Proper bounds for normalized features
         self.observation_space = spaces.Box(
             low=-10.0,      # Normalized features typically in [-3, 3]
             high=10.0,      # Using [-10, 10] for safety margin
@@ -48,29 +47,25 @@ class TradingEnv(gym.Env):
         self.returns_history = []
 
     def reset(self, seed=None, options=None):
-        """
-        Reset environment to initial state.
-        Must return (observation, info)
-        """
         super().reset(seed=seed)
         
-        # Reset to initial state
+        # Reset variables
         self.current_step = self.window_size
         self.balance = self.initial_balance
-        self.position = 0  # 0=neutral, 1=long, -1=short
+        self.position = 0
         self.entry_price = 0
-        self.returns_history = []
+        
+        # Initialize tracking variables
         self.total_trades = 0
         self.winning_trades = 0
-        
-        # Track for statistics
         self.peak_balance = self.initial_balance
         self.max_drawdown = 0
+        self.returns_history = []
         
         obs = self._get_observation()
-        info = self._get_info()
+        info = {}
         
-        return obs, info  
+        return obs, info  # ✅ Returns (observation, info)  
     
     def step(self, action):
         """

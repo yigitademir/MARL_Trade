@@ -14,7 +14,9 @@ from datetime import datetime
 import pandas as pd
 import numpy as np
 import sys
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 from env.trading_env import TradingEnv
 # ---- RL ----
 from stable_baselines3 import PPO
@@ -47,7 +49,7 @@ def parse_arguments():
     parser.add_argument("--gamma", type=float, default=0.99)
 
     # Training arguments
-    parser.add_argument("--total_timestamps", type=int, default=100000)
+    parser.add_argument("--total_timesteps", type=int, default=100000)
     parser.add_argument("--save_freq", type=int, default=10000)
 
     # Output arguments
@@ -209,7 +211,7 @@ def create_environments(train_df, val_df, args):
     # Create validation environment
     print("Validation environment:")
     val_env = TradingEnv(
-        df= val_env,
+        df= val_df,
         window_size= args.window_size,
         initial_balance= args.initial_balance,
         transaction_cost= 0.001
@@ -373,7 +375,7 @@ def train(model, args, callbacks):
     # Training
     try:
         model.learn(
-            total_timestamps = args.total_timestamps,
+            total_timesteps = args.total_timesteps,
             callback= callbacks,
             progress_bar = True
         )
@@ -571,7 +573,6 @@ def main():
     print(f"\nTo view training progress:")
     print(f"   tensorboard --logdir=logs/tensorboard")
     print("="*70 + "\n")
-
 
 if __name__ == "__main__":
     main()
