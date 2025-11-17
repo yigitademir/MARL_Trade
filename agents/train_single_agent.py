@@ -36,10 +36,16 @@ def parse_arguments():
         choices=["5m", "15m", "1h", "4h"], help="Timeframe to train on(default 1h)")
     parser.add_argument("--symbol", type=str, default="BTCUSDT")
     parser.add_argument("--data_path", type=str, default="data/processed")
+    parser.add_argument("--train_ratio", type=float, default=0.70,
+        help="Portion of data for training (time-ordered, default 0.70)")
+    parser.add_argument("--val_ratio", type=float, default=0.15,
+        help="Portion of data for validation (time-ordered, default 0.15). Remainder is test.")
 
     # Environment arguments
     parser.add_argument("--window_size", type=int, default=10, help="Number of candles to observe(default 10)")
     parser.add_argument("--initial_balance", type=float, default=10000.0)
+    parser.add_argument("--leverage", type=float, default=5.0,
+        help="Trading leverage (default=5x)")
 
     # PPO Hyperparameters
     parser.add_argument("--learning_rate", type=float, default=0.0003)
@@ -133,6 +139,8 @@ def split_data(df, train_ratio = 0.7, val_ratio = 0.15):
     Returns:
         tuple: (train_df, val_df, test_df)
     """
+    if train_ratio + val_ratio >= 1.0:
+        raise ValueError("train_ratio + val_ratio must be < 1.0 to leave room for test data.")
 
     # Sort by time
     df = df.sort_values("timestamp").reset_index(drop= True)
@@ -189,10 +197,11 @@ def create_environments(train_df, val_df, args):
     # Create training environment
     print("Training Environment:")
     train_env = TradingEnv(
-        df= train_df,
-        window_size= args.window_size,
-        initial_balance= args.initial_balance,
-        transaction_cost= 0.001 # 0.1% fee
+        df=train_df,
+        window_size=args.window_size,
+        initial_balance=args.initial_balance,
+        transaction_cost=0.0004,
+        leverage=args.leverage
     )
 
     # Monitor logging
@@ -204,17 +213,21 @@ def create_environments(train_df, val_df, args):
 
     print(f"Window size:{args.window_size} candles")
     print(f"Initial balance: ${args.initial_balance:,.2f}")
-    print(f"Transaction cost: 0.1%")
+    # Use the actual transaction cost passed to the environment
+    tc = train_env.unwrapped.transaction_cost * 100
+    print(f"Transaction cost: {tc:.4f}%")
+    print(f"Leverage: {args.leverage}x")
     print(f"Action space: {train_env.action_space}")
     print(f"Observation space: {train_env.observation_space.shape}")
 
     # Create validation environment
     print("Validation environment:")
     val_env = TradingEnv(
-        df= val_df,
-        window_size= args.window_size,
-        initial_balance= args.initial_balance,
-        transaction_cost= 0.001
+        df=val_df,
+        window_size=args.window_size,
+        initial_balance=args.initial_balance,
+        transaction_cost=0.0004,
+        leverage=args.leverage
     )
 
     # Monitor logging
@@ -318,7 +331,7 @@ def create_ppo_model(train_env, args):
         gae_lambda= 0.95, # standard GAE value
         clip_range= 0.2, # PPO clipping range
         clip_range_vf= None, # No value function clipping
-        ent_coef= 0.01, # Entropy coefficient (exploring)
+        ent_coef= 0.1, # Entropy coefficient (exploring)
         vf_coef= 0.5, # value function coefficient
         max_grad_norm= 0.5, # Gradient clipping
         use_sde= False, # Don't use State Dependent Exploration
@@ -340,7 +353,7 @@ def create_ppo_model(train_env, args):
     print(f"Epochs per update: {args.n_epochs}")
     print(f"Gamma (discount): {args.gamma}")
     print(f"Clip range: 0.2")
-    print(f"Entropy coefficient: 0.01")
+    print(f"Entropy coefficient: {model.ent_coef}")
     print(f"Device: {model.device}")
     
     print(f"\n Model Size:")
@@ -436,8 +449,10 @@ def save_model(model, args):
         "n_epochs": args.n_epochs,
         "gamma": args.gamma,
         "total_timesteps": args.total_timesteps,
+        "leverage": args.leverage,
+        "transaction_cost": 0.0004,
         "training_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    }
+        }
 
     with open(f"{save_path}_config.json", 'w') as f:
         json.dump(hyperparams, f, indent= 4)
@@ -461,10 +476,11 @@ def evaluate_model(model, test_df, args):
 
     # Create test environment
     test_env = TradingEnv(
-        df= test_df,
-        window_size= args.window_size,
-        initial_balance= args.initial_balance,
-        transaction_cost= 0.001
+        df=test_df,
+        window_size=args.window_size,
+        initial_balance=args.initial_balance,
+        transaction_cost=0.0004,
+        leverage=args.leverage
     )
 
     # Run evaluation episodes
@@ -473,6 +489,7 @@ def evaluate_model(model, test_df, args):
     episode_rois = []
     episode_sharpes = []
     episode_drawdowns = []
+    episode_pnls = []
 
     print(f"Running {n_eval_episodes} evaluation episodes...")
 
@@ -489,9 +506,11 @@ def evaluate_model(model, test_df, args):
 
         episode_rewards.append(episode_reward)
         episode_rois.append(info["roi"])
+        pnl = info["balance"] - args.initial_balance
+        episode_pnls.append(pnl)
 
         print(f"  Episode {episode+1}/{n_eval_episodes}: "
-              f"Reward={episode_reward:.2f}, ROI={info['roi']:.2f}%")
+              f"Reward={episode_reward:.2f}, ROI={info['roi']:.2f}%, PnL={pnl:.2f}")
         
 
     # Calculate statistics
@@ -499,20 +518,26 @@ def evaluate_model(model, test_df, args):
     std_reward = np.std(episode_rewards)
     mean_roi = np.mean(episode_rois)
     std_roi = np.std(episode_rois)
+    mean_pnl = np.mean(episode_pnls)
+    std_pnl = np.std(episode_pnls)
 
     print(f"\nTest Set Results:")
     print(f"   Mean Reward: {mean_reward:.2f} ± {std_reward:.2f}")
     print(f"   Mean ROI: {mean_roi:.2f}% ± {std_roi:.2f}%")
-    print(f"   Best Episode: {max(episode_rewards):.2f} (ROI: {max(episode_rois):.2f}%)")
-    print(f"   Worst Episode: {min(episode_rewards):.2f} (ROI: {min(episode_rois):.2f}%)")
+    print(f"   Mean PnL: {mean_pnl:.2f} ± {std_pnl:.2f}")
+    print(f"   Best Episode: {max(episode_rewards):.2f} (ROI: {max(episode_rois):.2f}%, PnL: {max(episode_pnls):.2f})")
+    print(f"   Worst Episode: {min(episode_rewards):.2f} (ROI: {min(episode_rois):.2f}%, PnL: {min(episode_pnls):.2f})")
 
     return {
         "mean_reward": mean_reward,
         "std_reward": std_reward,
         "mean_roi": mean_roi,
         "std_roi": std_roi,
+        "mean_pnl": mean_pnl,
+        "std_pnl": std_pnl,
         "episode_rewards": episode_rewards,
-        "episode_rois": episode_rois
+        "episode_rois": episode_rois,
+        "episode_pnls": episode_pnls
     }
 
 
@@ -544,7 +569,7 @@ def main():
 
     # Step 3
     df = load_data(args)
-    train_df, val_df, test_df = split_data(df)
+    train_df, val_df, test_df = split_data(df, train_ratio=args.train_ratio, val_ratio=args.val_ratio)
 
     # Step 4
     train_env, val_env = create_environments(train_df, val_df, args)
