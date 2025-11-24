@@ -108,10 +108,10 @@ def clean_features(df: pd.DataFrame) -> pd.DataFrame:
     print(" Cleaning features...")
     
     # 1. Forward fill NaN values (use previous valid value)
-    df = df.fillna(method='ffill')
+    df = df.ffill()
     
     # 2. Backward fill remaining NaN (for start of series)
-    df = df.fillna(method='bfill')
+    df = df.bfill()
     
     # 3. Replace any remaining NaN with 0
     df = df.fillna(0)
