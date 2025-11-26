@@ -2,7 +2,7 @@
 
 import pandas as pd
 from stable_baselines3 import PPO
-from multi_agent.backtester import MultiAgentBacktesterV1
+from src.multi_agent.backtester import MultiAgentBacktesterV1
 
 
 def load_models():

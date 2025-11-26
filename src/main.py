@@ -4,9 +4,9 @@ import ccxt
 import pandas as pd
 from datetime import datetime, timezone
 import tqdm
-from utils.data_fetcher import fetch_ohlcv
-from utils.data_checker import check_data_file
-from utils.features import generate_all_features
+from src.utils.data_fetcher import fetch_ohlcv
+from src.utils.data_checker import check_data_file
+from src.utils.features import generate_all_features
 
 # Load configuration
 with open('config/config.yaml', 'r') as file:

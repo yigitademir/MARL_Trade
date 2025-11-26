@@ -6,7 +6,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 import pandas as pd
 import numpy as np
 from stable_baselines3 import PPO
-from multi_agent.coordinator import MultiAgentCoordinator
+from src.multi_agent.coordinator import MultiAgentCoordinator
 
 
 class MultiAgentBacktesterV1:

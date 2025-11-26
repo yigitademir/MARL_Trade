@@ -5,7 +5,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 import pandas as pd
 import numpy as np
 from stable_baselines3 import PPO
-from env.trading_env import TradingEnv
+from src.env.trading_env import TradingEnv
 
 # Load test data
 df = pd.read_parquet("../data/processed/BTCUSDT_1h_features.parquet")

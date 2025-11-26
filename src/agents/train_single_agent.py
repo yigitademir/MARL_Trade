@@ -18,7 +18,7 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 # Environment
-from env.trading_env import TradingEnv
+from src.env.trading_env import TradingEnv
 
 # RL
 from stable_baselines3 import PPO
