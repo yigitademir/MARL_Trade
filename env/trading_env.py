@@ -51,7 +51,30 @@ class TradingEnv(gym.Env):
         self.action_space = spaces.Discrete(3)
 
         # Features (exclude timestamp)
-        self.feature_cols = [c for c in df.columns if c != "timestamp"]
+        # Preferred consistent ordering
+        preferred_order = [
+            "open", "high", "low", "close", "volume",
+            "log_return",
+            "EMA_10", "EMA_50",
+            "RSI_14",
+            "volatility_20",
+            "ATR_14",
+        ]
+
+        # Normalized versions if they exist
+        norm_cols = [c for c in df.columns if c.endswith("_norm")]
+
+        # Fallback for any extra engineered features
+        other_cols = [
+            c for c in df.columns
+            if c not in preferred_order and c not in norm_cols and c != "timestamp"
+        ]
+
+        self.feature_cols = preferred_order + norm_cols + other_cols
+        
+        if "ATR_14" not in self.feature_cols:
+            raise ValueError("ATR_14 missing from dataframe. Run feature pipeline again.")
+        
         self.n_features = len(self.feature_cols)
 
         self.observation_space = spaces.Box(

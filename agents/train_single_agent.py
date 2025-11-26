@@ -6,6 +6,7 @@ Single-Agent PPO Training Script v3
 import os
 import argparse
 import json
+import csv
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -281,10 +282,17 @@ def evaluate_model(model, test_df, args):
 # ============================================================
 
 def append_results_to_csv(args, eval_stats, save_path):
-    import csv
+    """
+    Append single-run training + eval summary to logs/results.csv
 
-    logfile = "logs/results.csv"
-    exists = os.path.isfile(logfile)
+    args: argparse.Namespace from parse_arguments()
+    eval_stats: dict returned by evaluate_model(...)
+    save_path: path without .zip (where model was saved)
+    """
+    os.makedirs("logs", exist_ok=True)
+    csv_path = "logs/results.csv"
+
+    file_exists = os.path.exists(csv_path)
 
     row = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -294,22 +302,28 @@ def append_results_to_csv(args, eval_stats, save_path):
         "initial_balance": args.initial_balance,
         "leverage": args.leverage,
         "total_timesteps": args.total_timesteps,
-
-        # Evaluation
+        # training stats – fill later if/when we log them
+        "train_episodes": "",
+        "train_reward_max": "",
+        "train_reward_min": "",
+        "train_reward_mean": "",
+        "train_length_mean": "",
+        # eval stats
         "eval_mean_reward": eval_stats["mean_reward"],
         "eval_mean_roi": eval_stats["mean_roi"],
         "eval_mean_pnl": eval_stats["mean_pnl"],
-        "eval_mean_sharpe": eval_stats["mean_sharpe"],
-        "eval_mean_max_dd": eval_stats["mean_max_dd"]
+        # optional fields (will be NaN in summary if missing)
+        "eval_mean_sharpe": "",
+        "eval_mean_max_dd": "",
     }
 
-    with open(logfile, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=row.keys())
-        if not exists:
+    fieldnames = list(row.keys())
+
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if not file_exists:
             writer.writeheader()
         writer.writerow(row)
-
-    print(f"📁 Logged results to {logfile}")
 
 
 # ============================================================
@@ -332,6 +346,7 @@ def main():
 
     save_path = save_model(model, args)
     eval_stats = evaluate_model(model, test_df, args)
+
 
     append_results_to_csv(args, eval_stats, save_path)
 

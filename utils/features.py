@@ -53,6 +53,30 @@ def add_rolling_volatility(df:pd.DataFrame, period: int = 20) -> pd.DataFrame:
 
     return df
 
+def compute_atr(df, period=14):
+    """
+    Computes the Average True Range (ATR) using standard formula:
+    TR = max(high-low, abs(high-prev_close), abs(low-prev_close))
+    ATR = TR rolling mean
+    """
+    df = df.copy()
+
+    df["prev_close"] = df["close"].shift(1)
+
+    df["high_low"] = df["high"] - df["low"]
+    df["high_prev"] = (df["high"] - df["prev_close"]).abs()
+    df["low_prev"] = (df["low"] - df["prev_close"]).abs()
+
+    df["true_range"] = df[["high_low", "high_prev", "low_prev"]].max(axis=1)
+
+    # ATR14
+    df["ATR_14"] = df["true_range"].rolling(window=period).mean()
+
+    # Clean up
+    df.drop(columns=["prev_close", "high_low", "high_prev", "low_prev"], inplace=True)
+
+    return df
+
 def normalize_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Normalizes all feature columns(comes after "volume" column).
@@ -165,6 +189,7 @@ def generate_all_features(df: pd.DataFrame, filename: str, config: dict) -> pd.D
     df = add_ema(df, spans=[10, 50])
     df = add_rsi(df, period=14)
     df = add_rolling_volatility(df, period=20)
+    df = compute_atr(df, period=14)
     df = normalize_features(df)
     
     # CRITICAL: Clean features!
