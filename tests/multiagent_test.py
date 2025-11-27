@@ -89,7 +89,7 @@ def main():
 
     # 3) Create timestamped run directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = f"logs/multi_agent/backtests/{timestamp}_majority_vote/"
+    run_dir = f"logs/multi_agent/backtests/{timestamp}_majority_vote"
     os.makedirs(run_dir, exist_ok=True)
 
     print("\n=== Initializing Multi-Agent Backtester ===")

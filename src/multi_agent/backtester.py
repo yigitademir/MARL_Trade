@@ -140,71 +140,59 @@ class MultiAgentBacktesterV1:
         print("\n=== Backtester v1 complete ===\n")
 
     # ------------------------------------------------------------------
-    # v2: TRADING LOOP WITH LEVERAGE + LIQUIDATION
+    # v2: TRADING LOOP
     # ------------------------------------------------------------------
 
-    def run_trading(
-        self,
-        initial_balance=10_000,
-        leverage=5.0,
-        fee_rate=0.0004,
-        atr_mult=2.0,
-        rr_partial=2.5,
-        max_steps=None,
-        base_timeframe="1h",
-        verbose=True):
+    def run_trading( self, initial_balance=10000, leverage=5.0, fee_rate=0.0004, 
+                    max_steps=None, base_timeframe="1h", verbose=True):
         """
-        Multi-agent trading backtester with:
-        - ATR Chandelier Trailing Stop (A1)
-        - 2.5 RR partial close (50%)
-        - Realistic PnL
-        - Fees
-        - Multi-timeframe MARL decision-making
+        CLEAN BASELINE MULTI-AGENT BACKTEST
+        -----------------------------------
+        - No ATR
+        - No trailing stop
+        - No liquidation
+        - No partial close
+        - No risk engine
+        - Only MARL signal → simple trading
+
+        Purpose: baseline MARL evaluation with frozen environment.
         """
 
         df_base = self.data[base_timeframe]
 
         balance = initial_balance
-        position = 0           # 1 long, -1 short, 0 flat
+        position = 0                 # 1 long, -1 short, 0 flat
         entry_price = None
         position_size = 0.0
-
-        highest_price = None
-        lowest_price = None
-        trail_stop = None
-        partial_taken = False
 
         equity_curve = []
         trades = []
 
         if verbose:
-            print("\n=== Multi-Agent Backtester v3 (ATR Chandelier Risk Engine) ===")
+            print("\n=== Multi-Agent Backtester (CLEAN BASELINE) ===")
             print(f"Initial balance: {initial_balance:,.2f}")
 
-        # ------------------------------------------------------------
-        # MAIN LOOP
-        # ------------------------------------------------------------
         for step_i, ts in enumerate(self.timestamps):
 
             if max_steps and step_i >= max_steps:
                 break
 
-            # price for evaluation TF
+            # Price at evaluation TF
             row = df_base[df_base["timestamp"] == ts]
             if row.empty:
                 continue
-            price = float(row["close"].iloc[0])
-            atr = float(row["ATR_14"].iloc[0])
 
-            # 1) Build multi-agent decision
+            price = float(row["close"].iloc[0])
+
+            # ========== 1) Multi-agent decision ==========
             actions = {}
             for tf, model in self.models.items():
                 df = self.data[tf]
                 idxs = df.index[df["timestamp"] == ts].tolist()
                 if not idxs:
                     continue
-                idx = idxs[0]
 
+                idx = idxs[0]
                 if idx < self.window_size:
                     continue
 
@@ -216,97 +204,35 @@ class MultiAgentBacktesterV1:
                 continue
 
             final_action = self.coordinator.decide(actions)
-
             prev_position = position
-            prev_balance = balance
-            prev_equity = balance
 
-            # ------------------------------------------------------------
-            # 2) Maintain ATR-based trailing stop
-            # ------------------------------------------------------------
-            if position == 1:  # long
-                highest_price = price if highest_price is None else max(highest_price, price)
-                trail_stop = highest_price - atr_mult * atr
-
-            elif position == -1:  # short
-                lowest_price = price if lowest_price is None else min(lowest_price, price)
-                trail_stop = lowest_price + atr_mult * atr
-
-            # ------------------------------------------------------------
-            # 3) Check trailing stop hit BEFORE new signals
-            # ------------------------------------------------------------
-            stop_hit = False
-
-            if position == 1 and price <= trail_stop:
-                stop_hit = True
-            if position == -1 and price >= trail_stop:
-                stop_hit = True
-
-            # ------------------------------------------------------------
-            # 4) 2.5 RR partial close
-            # ------------------------------------------------------------
-            if position != 0 and not partial_taken:
-                if position == 1:
-                    reward_ratio = (price - entry_price) / (entry_price - (highest_price - atr_mult * atr))
-                else:
-                    reward_ratio = (entry_price - price) / ((lowest_price + atr_mult * atr) - entry_price)
-
-                if reward_ratio >= rr_partial:
-                    # Close HALF the position
-                    realized = 0.5 * position_size * (price - entry_price) * position
-                    balance += realized
-                    position_size *= 0.5
-                    partial_taken = True
-
-                    trades.append({
-                        "timestamp": ts,
-                        "price": price,
-                        "action": "PARTIAL",
-                        "realized_pnl": realized,
-                        "balance_after": balance
-                    })
-
-            # ------------------------------------------------------------
-            # 5) Execute exit: either from stop-loss or agent signal
-            # ------------------------------------------------------------
-            exit_signal = (final_action != position)
-
-            if stop_hit or exit_signal:
-                if position != 0:
-                    realized_pnl = position_size * (price - entry_price) * position
-                    balance += realized_pnl
-                else:
-                    realized_pnl = 0
+            # ========== 2) Exit current position if signal changed ==========
+            if final_action != position and position != 0:
+                realized_pnl = position_size * (price - entry_price) * position
+                balance += realized_pnl
 
                 trades.append({
                     "timestamp": ts,
                     "price": price,
-                    "action": "EXIT_STOP" if stop_hit else "EXIT_SIGNAL",
+                    "action": "EXIT",
                     "realized_pnl": realized_pnl,
                     "balance_after": balance
                 })
 
-                # Close position
                 position = 0
-                entry_price = None
                 position_size = 0
-                highest_price = None
-                lowest_price = None
-                trail_stop = None
-                partial_taken = False
+                entry_price = None
 
-            # ------------------------------------------------------------
-            # 6) Enter new position if signaled
-            # ------------------------------------------------------------
+            # ========== 3) Enter new position if needed ==========
             if final_action != 0 and position == 0:
                 position = final_action
                 entry_price = price
-                balance -= balance * fee_rate  # entry fee
-                position_size = (balance * leverage) / price
 
-                highest_price = price
-                lowest_price = price
-                partial_taken = False
+                # Apply fee
+                balance -= balance * fee_rate
+
+                # Determine size
+                position_size = (balance * leverage) / price
 
                 trades.append({
                     "timestamp": ts,
@@ -316,20 +242,19 @@ class MultiAgentBacktesterV1:
                     "balance_after": balance
                 })
 
-            # ------------------------------------------------------------
-            # 7) EQUITY (mark-to-market)
-            # ------------------------------------------------------------
+            # ========== 4) Mark-to-market equity ==========
             if position == 0:
                 unrealized = 0
             else:
                 unrealized = position_size * (price - entry_price) * position
 
             equity = balance + unrealized
-            equity_curve.append([ts, price, equity, balance, position, unrealized])
 
-        # ------------------------------------------------------------
-        # Return DataFrames
-        # ------------------------------------------------------------
+            equity_curve.append([
+                ts, price, equity, balance, position, unrealized
+            ])
+
+        # Convert to DataFrame
         equity_df = pd.DataFrame(equity_curve, columns=[
             "timestamp", "price", "equity", "balance", "position", "unrealized_pnl"
         ])
