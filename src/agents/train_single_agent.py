@@ -10,6 +10,7 @@ import csv
 from datetime import datetime
 import pandas as pd
 import numpy as np
+import glob
 
 from src.env.trading_env import TradingEnv
 
@@ -61,13 +62,10 @@ def parse_arguments():
 # ============================================================
 
 def create_directories(args):
-    os.makedirs(args.output_dir, exist_ok=True)
-    os.makedirs(f"{args.output_dir}/checkpoints", exist_ok=True)
-    os.makedirs(f"{args.output_dir}/best", exist_ok=True)
-    os.makedirs(f"{args.output_dir}/final", exist_ok=True)
-    os.makedirs("logs", exist_ok=True)
+    os.makedirs("models/single_agents", exist_ok=True)
+    os.makedirs("models/best", exist_ok=True)
+    os.makedirs("models/checkpoints", exist_ok=True)
     os.makedirs("logs/tensorboard", exist_ok=True)
-
 
 # ============================================================
 # 3) DATA LOADING
@@ -142,21 +140,42 @@ def setup_callbacks(args, val_env):
 
     checkpoint_callback = CheckpointCallback(
         save_freq=args.save_freq,
-        save_path=f"{args.output_dir}/checkpoints",
-        name_prefix=f"{args.symbol}_{args.timeframe}",
+        save_path="models/checkpoints",
+        name_prefix=f"{args.symbol}_{args.timeframe}_step"
     )
 
     eval_callback = EvalCallback(
         val_env,
-        best_model_save_path=f"{args.output_dir}/best",
+        best_model_save_path="models/best",
         log_path="logs",
         eval_freq=args.save_freq,
         n_eval_episodes=5,
         deterministic=True,
-        verbose=1
+        verbose=1)
+    
+    return [checkpoint_callback, eval_callback]
+
+def cleanup_checkpoints(pattern="models/checkpoints/*.zip", keep_last=3):
+    """
+    Deletes old checkpoint files, keeping only the newest N.
+    """
+    files = sorted(
+        glob.glob(pattern),
+        key=os.path.getmtime,   # sort by modification time
+        reverse=True            # newest first
     )
 
-    return [checkpoint_callback, eval_callback]
+    if len(files) <= keep_last:
+        return  # nothing to delete
+
+    to_delete = files[keep_last:]
+
+    for f in to_delete:
+        try:
+            os.remove(f)
+            print(f"Deleted old checkpoint: {f}")
+        except Exception as e:
+            print(f"Could not delete checkpoint {f}: {e}")
 
 
 # ============================================================
@@ -199,6 +218,10 @@ def train(model, args, callbacks):
         callback=callbacks,
         progress_bar=True
     )
+
+    # Cleanup checkpoints after each learn cycle
+    cleanup_checkpoints("models/checkpoints/*.zip", keep_last=3)
+
     return model
 
 
@@ -207,12 +230,8 @@ def train(model, args, callbacks):
 # ============================================================
 
 def save_model(model, args):
-    if args.model_name:
-        model_name = args.model_name
-    else:
-        model_name = f"{args.symbol}_{args.timeframe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-    save_path = f"{args.output_dir}/final/{model_name}"
+    clean_name = f"{args.symbol}_{args.timeframe}_final"
+    save_path = f"models/single_agents/{clean_name}"
     model.save(save_path)
 
     # Save hyperparameters
@@ -335,6 +354,13 @@ def main():
     callbacks = setup_callbacks(args, val_env)
     model = create_ppo_model(train_env, args)
     model = train(model, args, callbacks)
+
+    # Rename best model file if it exists
+    default_best = "models/best/best_model.zip"
+    clean_best = f"models/best/{args.symbol}_{args.timeframe}_best.zip"
+
+    if os.path.exists(default_best):
+        os.replace(default_best, clean_best)
 
     save_path = save_model(model, args)
     eval_stats = evaluate_model(model, test_df, args)
