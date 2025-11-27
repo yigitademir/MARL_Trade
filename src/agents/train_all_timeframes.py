@@ -125,8 +125,7 @@ def main():
 
         cmd = [
             sys.executable,
-            "-m",
-            "src.agents.train_single_agent",
+            "-m", "src.agents.train_single_agent",
             "--symbol", args.symbol,
             "--timeframe", tf,
             "--total_timesteps", str(args.total_timesteps),
@@ -136,8 +135,6 @@ def main():
             "--train_ratio", str(args.train_ratio),
             "--val_ratio", str(args.val_ratio),
             "--data_path", args.data_path,
-            "--output_dir", args.output_dir,
-            "--save_freq", str(args.save_freq),
         ]
 
         print(f"Running: {' '.join(cmd)}\n")

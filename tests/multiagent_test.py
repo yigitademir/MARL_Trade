@@ -1,22 +1,69 @@
-# multi_agent/multiagent_test.py
+"""
+Multi-Agent Backtest Runner
+============================
 
+Runs the multi-agent policy using the trained single-agent models from
+models/single_agents/, loads their predictions, passes them through
+the coordinator, and executes the full trading simulation using the
+Backtester v3 (risk engine).
+
+This script is used for:
+ - Checking that all 4 agents work together
+ - Running clean multi-agent backtests
+ - Saving results for thesis charts
+"""
+
+import os
+import glob
+import json
+from datetime import datetime
 import pandas as pd
 from stable_baselines3 import PPO
+
+# Backtester
 from src.multi_agent.backtester import MultiAgentBacktesterV1
 
 
+# ============================================================
+# Helper: Load LATEST model by prefix (per timeframe)
+# ============================================================
+
+def load_latest(prefix: str) -> str:
+    """
+    Return the path of the most recently saved model for this timeframe.
+
+    Example:
+        load_latest("BTCUSDT_5m")
+        → models/single_agents/BTCUSDT_5m_20251127_153210_final.zip
+    """
+    files = glob.glob(f"models/single_agents/{prefix}*.zip")
+    if not files:
+        raise FileNotFoundError(f"No saved model found for prefix: {prefix}")
+    return max(files, key=os.path.getmtime)
+
+
+# ============================================================
+# Load All 4 Agents
+# ============================================================
+
 def load_models():
-    """Load all timeframe agents."""
+    """Load the latest trained PPO agent for each timeframe."""
+    print("\n=== Loading Agents ===")
     return {
-        "5m": PPO.load("models/final/BTCUSDT_5m_20251124_104950"),
-        "15m": PPO.load("models/final/BTCUSDT_15m_20251124_105309"),
-        "1h": PPO.load("models/final/BTCUSDT_1h_20251124_105134"),
-        "4h": PPO.load("models/final/BTCUSDT_4h_20251124_105449"),
+        "5m": PPO.load(load_latest("BTCUSDT_5m")),
+        "15m": PPO.load(load_latest("BTCUSDT_15m")),
+        "1h": PPO.load(load_latest("BTCUSDT_1h")),
+        "4h": PPO.load(load_latest("BTCUSDT_4h")),
     }
 
 
+# ============================================================
+# Load Feature Data
+# ============================================================
+
 def load_data():
-    """Load all processed feature datasets."""
+    """Load all processed feature datasets required for multi-agent backtesting."""
+    print("\n=== Loading Data ===")
     return {
         "5m": pd.read_parquet("data/processed/BTCUSDT_5m_features.parquet"),
         "15m": pd.read_parquet("data/processed/BTCUSDT_15m_features.parquet"),
@@ -25,15 +72,29 @@ def load_data():
     }
 
 
+# ============================================================
+# Main Backtest Logic
+# ============================================================
+
 def main():
 
-    # 1) Load agents
+    # Ensure folder structure exists
+    os.makedirs("logs/multi_agent/backtests", exist_ok=True)
+
+    # 1) Load the four PPO agents
     models = load_models()
 
-    # 2) Load datasets
+    # 2) Load datasets for each timeframe
     data = load_data()
 
-    # 3) Create backtester
+    # 3) Create timestamped run directory
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = f"logs/multi_agent/backtests/{timestamp}_majority_vote/"
+    os.makedirs(run_dir, exist_ok=True)
+
+    print("\n=== Initializing Multi-Agent Backtester ===")
+
+    # 4) Create the backtester engine
     bt = MultiAgentBacktesterV1(
         models=models,
         data=data,
@@ -41,28 +102,27 @@ def main():
         strategy="majority_vote"
     )
 
-    # 4) Run the full trading backtest — Backtester v3 (risk engine)
+    # 5) Run the full multi-agent trading simulation
+    print("\n=== Running Backtest ===")
     summary, equity_df, trade_df = bt.run_trading(
         initial_balance=10_000,
         leverage=5.0,
         fee_rate=0.0004,
-        max_steps=None,       # None = full dataset
-        base_timeframe="1h",  # always use stable timeframe for price
+        base_timeframe="1h",
         verbose=True
     )
 
-    # 5) Print summary cleanly
-    print("\nBACKTEST SUMMARY:")
-    for k, v in summary.items():
-        print(f"{k}: {v}")
+    # 6) Save backtest results
+    equity_df.to_csv(f"{run_dir}/equity_curve.csv", index=False)
+    trade_df.to_csv(f"{run_dir}/trades.csv", index=False)
 
-    # 6) OPTIONAL: Save results for thesis plots
-    equity_df.to_csv("multi_agent_equity_curve.csv", index=False)
-    trade_df.to_csv("multi_agent_trades.csv", index=False)
+    with open(f"{run_dir}/summary.json", "w") as f:
+        json.dump(summary, f, indent=4)
 
-    print("\nSaved:")
-    print(" - multi_agent_equity_curve.csv")
-    print(" - multi_agent_trades.csv")
+    print("\nSaved multi-agent results to:")
+    print(f" - {run_dir}/equity_curve.csv")
+    print(f" - {run_dir}/trades.csv")
+    print(f" - {run_dir}/summary.json")
     print("==============================================")
 
 
