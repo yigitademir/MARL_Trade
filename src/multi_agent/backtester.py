@@ -336,18 +336,25 @@ class MultiAgentBacktesterV1:
         trade_df = pd.DataFrame(trades)
 
         # Stats
-        if verbose:
-            final_equity = float(equity_df["equity"].iloc[-1])
-            roi = (final_equity - initial_balance) / initial_balance * 100
-            max_dd = (
-                (equity_df["equity"].cummax() - equity_df["equity"]) /
-                equity_df["equity"].cummax()
-            ).max()
+        final_equity = float(equity_df["equity"].iloc[-1])
+        roi = (final_equity - initial_balance) / initial_balance * 100
+        max_dd = (
+            (equity_df["equity"].cummax() - equity_df["equity"]) /
+            equity_df["equity"].cummax()
+        ).max()
 
+        summary = {
+            "final_equity": final_equity,
+            "roi_pct": roi,
+            "max_drawdown_pct": float(max_dd * 100),
+            "trades": int(len(trade_df)),
+        }
+
+        if verbose:
             print(f"Final equity  : {final_equity:,.2f}")
             print(f"ROI           : {roi:.2f}%")
             print(f"Max drawdown  : {max_dd*100:.2f}%")
             print(f"Trades        : {len(trade_df)}")
             print("==========================================")
 
-        return equity_df, trade_df
+        return summary, equity_df, trade_df

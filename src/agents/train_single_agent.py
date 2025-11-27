@@ -10,17 +10,9 @@ import csv
 from datetime import datetime
 import pandas as pd
 import numpy as np
-import sys
 
-# Add project root
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
-
-# Environment
 from src.env.trading_env import TradingEnv
 
-# RL
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.monitor import Monitor
