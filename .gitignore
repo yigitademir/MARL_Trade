@@ -1,97 +1,66 @@
-# =========================================
-# Python & Virtual Environment
-# =========================================
+# ============================
+# Python / Virtualenv
+# ============================
 __pycache__/
-*/__pycache__/
 *.pyc
 *.pyo
-*.pyd
-*.so
 
-.env
 .venv/
+env/
 venv/
 
-# =========================================
-# IDE / System Files
-# =========================================
+# ============================
+# IDE Files
+# ============================
 .vscode/
 .idea/
-.DS_Store
-Thumbs.db
 
-# =========================================
-# Jupyter Notebooks (allow notebooks)
-# Ignore checkpoints only
-# =========================================
-.ipynb_checkpoints/
+# ============================
+# Ignore Large Outputs
+# ============================
+# Logs
+logs/
+logs/*
 
-# =========================================
-# Data (Large, Regenerated)
-# =========================================
-# Raw OHLCV files
-data/*.parquet
+# Results & CSV logs
+*.csv
+logs/*.csv
+
+# Models
+models/best/
+models/checkpoints/
+models/single_agents/
+models/multi_agent/
+*.zip
+
+# ============================
+# Data files
+# ============================
 data/*.csv
-data/raw/
-data/cache/
-
-# Feature files (big but reproducible)
-data/processed/*.parquet
+data/*.parquet
 data/processed/*.csv
+data/processed/*.parquet
 
-# Keep empty folder structure
+# Keep only feature generator code, not data
 !data/
 !data/processed/
+!data/raw/
 
-# =========================================
-# RL Training Artifacts
-# =========================================
+# ============================
+# TensorBoard
+# ============================
+tensorboard/
+tensorboard_runs/
+*.tfevents.*
 
-# Checkpoints (not needed)
-models/checkpoints/
-models/*_steps.zip
+# ============================
+# Jupyter + IPython
+# ============================
+*.ipynb
+.ipynb_checkpoints/
 
-# Replay buffers (SB3)
-*replay_buffer*
-
-# Best/final models SHOULD BE KEPT
-!models/
-!models/single_agents/
-!models/multi_agent/
-!models/final/
-
-# Avoid ignoring final .zip models
-!models/**/*.zip
-
-# =========================================
-# Logs
-# =========================================
-# Ignore heavy tensorboard logs
-logs/tensorboard/
-logs/tensorboard/**/*
-
-# Ignore .monitor files
-*.monitor.csv
-
-# KEEP performance summary CSV
-!logs/
-!logs/single_agent/
-!logs/single_agent/results.csv
-!logs/multi_agent/
-!logs/multi_agent/**/*.csv
-
-# =========================================
-# Evaluation files
-# =========================================
-evaluations/
-evaluation/
-*.npz
-*.npy
-*.json
-
-# =========================================
-# Temporary
-# =========================================
-*.tmp
-*.bak
-*.log
+# ============================
+# OS / Temp
+# ============================
+.DS_Store
+Thumbs.db
