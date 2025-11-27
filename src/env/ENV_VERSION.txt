@@ -1,0 +1,8 @@
+Environment frozen on: 2025-11-27
+Version: 1.0.0
+Notes:
+- Window size = 10
+- ATR-based risk engine implemented externally (not inside env)
+- Features fixed: log_return, EMAs, RSI, volatility, ATR
+- Reward function: PnL-based + regularization
+- Action space: 3 actions (Hold, Buy, Sell)

@@ -1,3 +1,5 @@
+# ENV_VERSION = "1.0.0"
+
 import numpy as np
 import pandas as pd
 import gymnasium as gym
@@ -14,15 +16,6 @@ class TradingEnv(gym.Env):
         ✔ leverage applied to directional signal
         ✔ hybrid reward remains stable with leverage
         ✔ PPO-friendly clipping
-        
-    Hybrid Reward (Option C + leverage):
-        effective_return = leverage * position * price_return
-
-        reward = 0.7 * (step_return * 100)
-               + 0.3 * (effective_return * 100)
-               - 0.05 * trade_executed
-
-        reward clipped to [-1, 1]
     """
 
     metadata = {"render_modes": []}
@@ -114,6 +107,7 @@ class TradingEnv(gym.Env):
         self.current_step += 1
         self.episode_step += 1
 
+        # Episode termination conditions
         terminated_data_end = self.current_step >= len(self.df) - 1
         truncated_horizon = self.episode_step >= self.max_episode_steps
 
@@ -126,7 +120,9 @@ class TradingEnv(gym.Env):
         prev_equity = self.equity
         prev_position = self.position
 
-        # --- ACTION LOGIC ---
+        # ------------------------------------------------------------
+        # ACTION LOGIC
+        # ------------------------------------------------------------
         if action == 1:
             target_position = 1
         elif action == 2:
@@ -136,7 +132,9 @@ class TradingEnv(gym.Env):
 
         trade_executed = (target_position != prev_position)
 
-        # --- FEES ---
+        # ------------------------------------------------------------
+        # FEES
+        # ------------------------------------------------------------
         if trade_executed:
             fee = self.transaction_cost * prev_equity
             self.equity -= fee
@@ -144,12 +142,16 @@ class TradingEnv(gym.Env):
         else:
             fee = 0.0
 
-        # --- POSITION UPDATE ---
+        # ------------------------------------------------------------
+        # POSITION UPDATE
+        # ------------------------------------------------------------
         self.position = target_position
         if trade_executed:
             self.entry_price = curr_price
 
-        # --- RETURN / EQUITY DYNAMICS ---
+        # ------------------------------------------------------------
+        # RETURNS — REALIZED (equity-based)
+        # ------------------------------------------------------------
         price_return = (curr_price - prev_price) / prev_price
         effective_return = self.position * price_return * self.leverage
 
@@ -162,17 +164,28 @@ class TradingEnv(gym.Env):
         if trade_executed and step_return > 0:
             self.winning_trades += 1
 
-        # --- DRAWDOWN TRACKING ---
+        # ------------------------------------------------------------
+        # UNREALIZED PNL (Used for holding reward)
+        # ------------------------------------------------------------
+        if self.position != 0:
+            unrealized_pnl = (curr_price - self.entry_price) * self.position * self.leverage
+            unrealized_pnl_pct = unrealized_pnl / max(self.initial_balance, 1e-8)
+        else:
+            unrealized_pnl = 0.0
+            unrealized_pnl_pct = 0.0
+
+        # ------------------------------------------------------------
+        # DRAWDOWN
+        # ------------------------------------------------------------
         if self.equity > self.peak_equity:
             self.peak_equity = self.equity
 
-        self.current_drawdown = \
-            (self.peak_equity - self.equity) / max(self.peak_equity, 1e-8)
+        self.current_drawdown = (self.peak_equity - self.equity) / max(self.peak_equity, 1e-8)
 
         self.max_drawdown = max(self.max_drawdown, self.current_drawdown)
 
         # ------------------------------------------------------------
-        # HYBRID REWARD FUNCTION (with leverage amplification)
+        # REWARD FUNCTION (Safe PPO-Stable Reward)
         # ------------------------------------------------------------
         profit_component = step_return * 100.0
         directional_component = effective_return * 100.0
@@ -184,9 +197,19 @@ class TradingEnv(gym.Env):
             trade_penalty
         )
 
-        reward = float(np.clip(reward, -1.0, 1.0))
-        # ------------------------------------------------------------
+        # tiny time penalty → prevents infinite hold
+        reward += -0.0001
 
+        # reward for holding profitable positions
+        if unrealized_pnl > 0:
+            reward += 0.02 * unrealized_pnl_pct
+
+        # PPO stability
+        reward = float(np.clip(reward, -1.0, 1.0))
+
+        # ------------------------------------------------------------
+        # OUTPUT
+        # ------------------------------------------------------------
         obs = self._get_observation()
         info = self._get_info()
 
@@ -196,10 +219,13 @@ class TradingEnv(gym.Env):
             "effective_return": float(effective_return),
             "step_return": float(step_return),
             "trade_executed": trade_executed,
+            "unrealized_pnl": float(unrealized_pnl),
             "reward_breakdown": {
                 "profit_component": profit_component,
                 "directional_component": directional_component,
                 "trade_penalty": trade_penalty,
+                "time_penalty": -0.0001,
+                "hold_reward": 0.02 * unrealized_pnl_pct if unrealized_pnl > 0 else 0.0,
             }
         })
 
