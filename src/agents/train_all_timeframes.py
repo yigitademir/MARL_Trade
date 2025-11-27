@@ -55,6 +55,40 @@ def load_new_results(logfile, old_keys):
                 new_rows.append(row)
     return new_rows
 
+# ============================================================
+# 12) PRINT SUMMARY TABLE
+# ============================================================
+
+def print_summary_table(results_log="logs/results.csv"):
+
+    if not os.path.exists(results_log):
+        print("\nNo results log found. Nothing to summarize.")
+        return
+
+    # Remove duplicate timeframe entries → keep ONLY latest per timeframe
+    unique_rows = {}
+    for row in rows:
+        unique_rows[row["timeframe"]] = row
+    rows = list(unique_rows.values())
+
+    print("\n" + "=" * 70)
+    print("📊 SUMMARY OF ALL SINGLE-AGENT RUNS")
+    print("=" * 70)
+
+    print(f"{'Timeframe':<10} {'Timesteps':>12} {'ROI %':>12} {'PnL':>12}")
+    print("-" * 70)
+
+    for row in rows:
+        tf = row["timeframe"]
+        steps = row["total_timesteps"]
+        roi = float(row["eval_mean_roi"])
+        pnl = float(row["eval_mean_pnl"])
+
+        print(f"{tf:<10} {steps:>12} {roi:>12.2f} {pnl:>12.2f}")
+
+    print("-" * 70)
+    print("✅ Summary complete.\n")
+
 
 # ----------------------------
 # Argument parsing
@@ -205,6 +239,7 @@ def main():
 
     print("-" * 70)
     print("✅ Multi-timeframe training completed.\n")
+    print_summary_table()
 
 
 if __name__ == "__main__":

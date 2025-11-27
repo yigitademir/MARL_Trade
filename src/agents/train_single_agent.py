@@ -26,6 +26,7 @@ This script:
 import os
 import argparse
 import json
+import csv
 from datetime import datetime
 
 import pandas as pd
@@ -288,6 +289,33 @@ def append_results(args, eval_stats, model_path):
             writer.writeheader()
         writer.writerow(row)
 
+def append_results_to_csv(args, eval_stats, save_path):
+    os.makedirs("logs", exist_ok=True)
+    csv_path = "logs/results.csv"
+
+    file_exists = os.path.exists(csv_path)
+
+    row = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "symbol": args.symbol,
+        "timeframe": args.timeframe,
+        "model_path": save_path,
+        "initial_balance": args.initial_balance,
+        "leverage": args.leverage,
+        "total_timesteps": args.total_timesteps,
+        "eval_mean_reward": eval_stats["mean_reward"],
+        "eval_mean_roi": eval_stats["mean_roi"],
+        "eval_mean_pnl": eval_stats["mean_pnl"],
+        "eval_mean_sharpe": eval_stats.get("mean_sharpe", ""),
+        "eval_mean_max_dd": eval_stats.get("mean_max_dd", "")
+    }
+
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=row.keys())
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
+
 
 # ============================================================
 # 8) MAIN TRAINING LOGIC
@@ -339,6 +367,7 @@ def main():
 
     # Evaluate model on unseen test set
     eval_stats = evaluate_model(model, test_df, args)
+    append_results_to_csv(args, eval_stats, model_path)
 
     # Save evaluation results
     with open(f"{run_dir}/eval_results.json", "w") as f:
