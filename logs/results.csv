@@ -1,2 +1,0 @@
-timestamp,symbol,timeframe,model_path,initial_balance,leverage,total_timesteps,train_episodes,train_reward_max,train_reward_min,train_reward_mean,train_length_mean,eval_mean_reward,eval_mean_roi,eval_mean_pnl,eval_mean_sharpe,eval_mean_max_dd
-2025-11-26 16:40:43,BTCUSDT,4h,models/final/BTCUSDT_4h_20251126_164038,10000.0,5.0,100000,,,,,,-42.686274193399626,-85.27384842235982,-8527.384842235984,,

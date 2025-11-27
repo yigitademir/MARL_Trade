@@ -1,5 +1,0 @@
-timestamp,symbol,timeframe,model_path,initial_balance,leverage,total_timesteps,train_episodes,train_reward_max,train_reward_min,train_reward_mean,train_length_mean,eval_mean_reward,eval_mean_roi,eval_mean_pnl,eval_mean_sharpe,eval_mean_max_dd
-2025-11-26 14:19:05,BTCUSDT,5m,models/final/BTCUSDT_5m_20251126_141900,10000.0,5.0,100000,,,,,,-20.224549103080676,-14.773501008053463,-1477.3501008053463,,
-2025-11-26 14:20:33,BTCUSDT,15m,models/final/BTCUSDT_15m_20251126_142028,10000.0,5.0,100000,,,,,,33.038817202376755,9.836463496679098,983.6463496679098,,
-2025-11-26 14:22:01,BTCUSDT,1h,models/final/BTCUSDT_1h_20251126_142156,10000.0,5.0,100000,,,,,,0.0,0.0,0.0,,
-2025-11-26 14:23:31,BTCUSDT,4h,models/final/BTCUSDT_4h_20251126_142327,10000.0,5.0,100000,,,,,,47.39880340829922,-43.09024681097742,-4309.024681097741,,
