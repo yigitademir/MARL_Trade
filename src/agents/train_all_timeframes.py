@@ -118,10 +118,6 @@ def main():
     results_log = "logs/results.csv"
     old_keys = load_existing_results(results_log)
 
-    # Path to train_single_agent.py
-    this_dir = os.path.dirname(os.path.abspath(__file__))
-    train_script = os.path.join(this_dir, "train_single_agent.py")
-
     for tf in timeframes:
         print("\n" + "=" * 70)
         print(f"🎯 TRAINING TIMEFRAME: {tf}")
@@ -129,7 +125,8 @@ def main():
 
         cmd = [
             sys.executable,
-            train_script,
+            "-m",
+            "src.agents.train_single_agent",
             "--symbol", args.symbol,
             "--timeframe", tf,
             "--total_timesteps", str(args.total_timesteps),
