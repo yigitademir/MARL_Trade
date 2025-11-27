@@ -27,10 +27,7 @@ logs/*
 logs/*.csv
 
 # Models
-models/best/
-models/checkpoints/
-models/single_agents/
-models/multi_agent/
+*.json
 *.zip
 
 # ============================
