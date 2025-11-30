@@ -167,6 +167,7 @@ class MultiAgentBacktesterV1:
 
         equity_curve = []
         trades = []
+        per_agent_actions = {tf: [] for tf in self.models.keys()}
 
         if verbose:
             print("\n=== Multi-Agent Backtester (CLEAN BASELINE) ===")
@@ -189,7 +190,7 @@ class MultiAgentBacktesterV1:
             for tf, model in self.models.items():
                 df = self.data[tf]
                 idxs = df.index[df["timestamp"] == ts].tolist()
-                if not idxs:
+                if len(idxs) == 0:
                     continue
 
                 idx = idxs[0]
@@ -199,6 +200,20 @@ class MultiAgentBacktesterV1:
                 obs = self._build_observation(df, idx)
                 action, _ = model.predict(obs, deterministic=True)
                 actions[tf] = int(action)
+
+                # Log voted agent
+                per_agent_actions[tf].append({
+                    "timestamp": ts,
+                    "action": int(action)
+                })
+
+            # Log HOLD for agents missing at this timestamp
+            for tf in self.models.keys():
+                if tf not in actions:
+                    per_agent_actions[tf].append({
+                        "timestamp": ts,
+                        "action": 0
+                    })
 
             if not actions:
                 continue
@@ -246,7 +261,10 @@ class MultiAgentBacktesterV1:
             if position == 0:
                 unrealized = 0
             else:
-                unrealized = position_size * (price - entry_price) * position
+                if entry_price is None:
+                    unrealized = 0
+                else:
+                    unrealized = position_size * (price - entry_price) * position
 
             equity = balance + unrealized
 
@@ -254,7 +272,12 @@ class MultiAgentBacktesterV1:
                 ts, price, equity, balance, position, unrealized
             ])
 
+
         # Convert to DataFrame
+        agent_action_dfs = {
+            tf: pd.DataFrame(records) 
+            for tf, records in per_agent_actions.items()
+        }
         equity_df = pd.DataFrame(equity_curve, columns=[
             "timestamp", "price", "equity", "balance", "position", "unrealized_pnl"
         ])
@@ -282,4 +305,4 @@ class MultiAgentBacktesterV1:
             print(f"Trades        : {len(trade_df)}")
             print("==========================================")
 
-        return summary, equity_df, trade_df
+        return summary, equity_df, trade_df, agent_action_dfs
