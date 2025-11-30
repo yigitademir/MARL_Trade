@@ -62,4 +62,4 @@ tensorboard_runs/
 Thumbs.db
 
 # PNG Files
-.png
+*.png
