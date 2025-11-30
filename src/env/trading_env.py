@@ -107,7 +107,9 @@ class TradingEnv(gym.Env):
         self.current_step += 1
         self.episode_step += 1
 
-        # Episode termination conditions
+        # -----------------------------
+        # 1) Episode termination flags
+        # -----------------------------
         terminated_data_end = self.current_step >= len(self.df) - 1
         truncated_horizon = self.episode_step >= self.max_episode_steps
 
@@ -120,21 +122,21 @@ class TradingEnv(gym.Env):
         prev_equity = self.equity
         prev_position = self.position
 
-        # ------------------------------------------------------------
-        # ACTION LOGIC
-        # ------------------------------------------------------------
+        # -----------------------------
+        # 2) ACTION LOGIC
+        # -----------------------------
         if action == 1:
-            target_position = 1
+            target_position = 1    # Long
         elif action == 2:
-            target_position = -1
+            target_position = -1   # Short
         else:
-            target_position = prev_position
+            target_position = prev_position  # Hold
 
         trade_executed = (target_position != prev_position)
 
-        # ------------------------------------------------------------
-        # FEES
-        # ------------------------------------------------------------
+        # -----------------------------
+        # 3) FEES
+        # -----------------------------
         if trade_executed:
             fee = self.transaction_cost * prev_equity
             self.equity -= fee
@@ -142,74 +144,84 @@ class TradingEnv(gym.Env):
         else:
             fee = 0.0
 
-        # ------------------------------------------------------------
-        # POSITION UPDATE
-        # ------------------------------------------------------------
+        # -----------------------------
+        # 4) POSITION UPDATE
+        # -----------------------------
         self.position = target_position
         if trade_executed:
             self.entry_price = curr_price
 
-        # ------------------------------------------------------------
-        # RETURNS — REALIZED (equity-based)
-        # ------------------------------------------------------------
+        # -----------------------------
+        # 5) EQUITY DYNAMICS
+        #    (price move + leverage)
+        # -----------------------------
         price_return = (curr_price - prev_price) / prev_price
         effective_return = self.position * price_return * self.leverage
 
+        # Update equity with leveraged return
         self.equity *= (1 + effective_return)
 
-        step_return = (self.equity - prev_equity) / max(prev_equity, 1e-8)
-        self.last_step_return = float(step_return)
-        self.returns_history.append(step_return)
+        # Log-return on EQUITY (PPO-friendly)
+        equity_ratio = self.equity / max(prev_equity, 1e-8)
+        log_ret = float(np.log(equity_ratio))
 
-        if trade_executed and step_return > 0:
+        # We keep the field name for compatibility, but now it stores log-return
+        self.last_step_return = log_ret
+        self.returns_history.append(log_ret)
+
+        if trade_executed and log_ret > 0:
             self.winning_trades += 1
 
-        # ------------------------------------------------------------
-        # UNREALIZED PNL (Used for holding reward)
-        # ------------------------------------------------------------
-        if self.position != 0:
+        # -----------------------------
+        # 6) DRAWDOWN TRACKING
+        # -----------------------------
+        if self.equity > self.peak_equity:
+            self.peak_equity = self.equity
+
+        self.current_drawdown = (
+            self.peak_equity - self.equity
+        ) / max(self.peak_equity, 1e-8)
+
+        self.max_drawdown = max(self.max_drawdown, self.current_drawdown)
+
+        # -----------------------------
+        # 7) UNREALIZED PNL (for hold bonus)
+        # -----------------------------
+        if self.position != 0 and self.entry_price is not None:
             unrealized_pnl = (curr_price - self.entry_price) * self.position * self.leverage
             unrealized_pnl_pct = unrealized_pnl / max(self.initial_balance, 1e-8)
         else:
             unrealized_pnl = 0.0
             unrealized_pnl_pct = 0.0
 
-        # ------------------------------------------------------------
-        # DRAWDOWN
-        # ------------------------------------------------------------
-        if self.equity > self.peak_equity:
-            self.peak_equity = self.equity
+        # -----------------------------
+        # 8) REWARD DESIGN (log-return based)
+        # -----------------------------
+        # Base term: scaled equity log-return
+        base_reward = 150.0 * log_ret 
 
-        self.current_drawdown = (self.peak_equity - self.equity) / max(self.peak_equity, 1e-8)
+        # Drawdown penalty: higher drawdown → stronger negative reward
+        dd_penalty = 0.25 * self.current_drawdown  
 
-        self.max_drawdown = max(self.max_drawdown, self.current_drawdown)
+        # Turnover penalty: discourage overtrading
+        turnover_penalty = 0.01 if trade_executed else 0.0
 
-        # ------------------------------------------------------------
-        # REWARD FUNCTION (Safe PPO-Stable Reward)
-        # ------------------------------------------------------------
-        profit_component = step_return * 100.0
-        directional_component = effective_return * 100.0
-        trade_penalty = -0.05 if trade_executed else 0.0
+        # Small bonus for holding profitable positions (unrealized PnL > 0)
+        hold_bonus = 0.02 * unrealized_pnl_pct if unrealized_pnl > 0 else 0.0
 
         reward = (
-            0.7 * profit_component +
-            0.3 * directional_component +
-            trade_penalty
+            base_reward
+            - dd_penalty
+            - turnover_penalty
+            + hold_bonus
         )
 
-        # tiny time penalty → prevents infinite hold
-        reward += -0.0001
-
-        # reward for holding profitable positions
-        if unrealized_pnl > 0:
-            reward += 0.02 * unrealized_pnl_pct
-
-        # PPO stability
+        # Final clipping for PPO stability
         reward = float(np.clip(reward, -1.0, 1.0))
 
-        # ------------------------------------------------------------
-        # OUTPUT
-        # ------------------------------------------------------------
+        # -----------------------------
+        # 9) BUILD OUTPUTS
+        # -----------------------------
         obs = self._get_observation()
         info = self._get_info()
 
@@ -217,16 +229,15 @@ class TradingEnv(gym.Env):
             "leverage": self.leverage,
             "price_return": float(price_return),
             "effective_return": float(effective_return),
-            "step_return": float(step_return),
+            "equity_log_return": log_ret,
             "trade_executed": trade_executed,
             "unrealized_pnl": float(unrealized_pnl),
             "reward_breakdown": {
-                "profit_component": profit_component,
-                "directional_component": directional_component,
-                "trade_penalty": trade_penalty,
-                "time_penalty": -0.0001,
-                "hold_reward": 0.02 * unrealized_pnl_pct if unrealized_pnl > 0 else 0.0,
-            }
+                "base_log_return": base_reward,
+                "dd_penalty": dd_penalty,
+                "turnover_penalty": turnover_penalty,
+                "hold_bonus": hold_bonus,
+            },
         })
 
         return obs, reward, terminated, truncated, info
