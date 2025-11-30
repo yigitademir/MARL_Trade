@@ -104,7 +104,7 @@ def main():
 
     # 5) Run the full multi-agent trading simulation
     print("\n=== Running Backtest ===")
-    summary, equity_df, trade_df = bt.run_trading(
+    summary, equity_df, trade_df, agent_actions = bt.run_trading(
         initial_balance=10_000,
         leverage=5.0,
         fee_rate=0.0004,
@@ -115,6 +115,8 @@ def main():
     # 6) Save backtest results
     equity_df.to_csv(f"{run_dir}/equity_curve.csv", index=False)
     trade_df.to_csv(f"{run_dir}/trades.csv", index=False)
+    for tf, df in agent_actions.items():
+        df.to_csv(f"{run_dir}/actions{tf}.csv", index=False)
 
     with open(f"{run_dir}/summary.json", "w") as f:
         json.dump(summary, f, indent=4)
