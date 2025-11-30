@@ -35,4 +35,5 @@ importlib-metadata>=4.13.0
 torch>=2.0.0
 opencv-python>=4.8.0
 ale-py>=0.8.0
+scipy
 EOF
