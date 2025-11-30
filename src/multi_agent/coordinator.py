@@ -22,9 +22,25 @@ class MultiAgentCoordinator:
         Example: ["5m", "15m", "1h", "4h"]
     """
 
-    def __init__(self, strategy: Literal["majority_vote", "priority_order"] = "majority_vote", priority: Optional[List[str]] = None,) -> None:
+    def __init__(self,
+        strategy: Literal["majority_vote", "priority_order", "weighted_vote"] = "majority_vote", 
+        priority: Optional[List[str]] = None,
+        weights: Optional[Dict[str, float]] = None
+        ) -> None:
+        """
+        Parameters
+        ----------
+        strategy : {"majority_vote", "priority_order", "weighted_vote"}
+            Coordination strategy.
+        priority : list of str, optional
+            Used only for "priority_order".
+        weights : dict, optional
+            Used only for "weighted_vote". Example:
+                {"5m": 2.0, "15m": 1.5, "1h": 1.0, "4h": 1.0}
+        """
         self.strategy = strategy
         self.priority = priority or ["5m", "15m", "1h", "4h"]
+        self.weights = weights or {}
 
     def decide(self, actions: Dict[str, Action]) -> Action:
         """
@@ -48,6 +64,8 @@ class MultiAgentCoordinator:
             return self._majority_vote(actions)
         elif self.strategy == "priority_order":
             return self._priority_order(actions)
+        elif self.strategy == "weighted_vote":
+            return self.weighted_vote(actions)
         else:
             raise ValueError(f"Unknown coordination strategy: {self.strategy}")
         
@@ -83,6 +101,33 @@ class MultiAgentCoordinator:
 
         # Very unlikely to reach here
         return 0
+    
+    def _weighted_vote(self, actions: Dict[str, Action]) -> Action:
+        """
+        Weighted vote strategy.
+
+        - Each timeframe has a weight w_tf (default = 1.0 if not provided).
+        - For each action (0, 1, 2) we sum weights of agents voting that action.
+        - Final action = action with highest total weight.
+        - Tie-break: BUY (1) > SELL (2) > HOLD (0).
+        """
+        # Initialize scores for each action
+        scores = {0: 0.0, 1: 0.0, 2: 0.0}
+
+        for tf, a in actions.items():
+            w = float(self.weights.get(tf, 1.0))  # default weight 1.0
+            scores[a] += w
+
+        max_score = max(scores.values())
+        candidates = [a for a, s in scores.items() if s == max_score]
+
+        # Tie-breaking preference: BUY > SELL > HOLD
+        for preferred in [1, 2, 0]:
+            if preferred in candidates:
+                return preferred
+
+        return 0  # fallback
+        
 
     def _priority_order(self, actions: Dict[str, Action]) -> Action:
         """
