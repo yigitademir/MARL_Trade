@@ -65,7 +65,7 @@ class MultiAgentCoordinator:
         elif self.strategy == "priority_order":
             return self._priority_order(actions)
         elif self.strategy == "weighted_vote":
-            return self.weighted_vote(actions)
+            return self._weighted_vote(actions)
         else:
             raise ValueError(f"Unknown coordination strategy: {self.strategy}")
         
