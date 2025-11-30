@@ -60,3 +60,6 @@ tensorboard_runs/
 # ============================
 .DS_Store
 Thumbs.db
+
+# PNG Files
+.png
