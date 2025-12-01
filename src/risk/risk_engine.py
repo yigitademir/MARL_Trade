@@ -44,6 +44,8 @@ class RiskEngine:
         self.peak_equity: Optional[float] = None
         self.current_drawdown: float = 0.0
         self.kill_switch_triggered: bool = False
+        # Leverage multiplier for position sizing (set externally)
+        self.leverage = 1.0
 
     # --------------------------------------------------------------
     # Lifecycle
@@ -95,7 +97,7 @@ class RiskEngine:
         if atr < self.config.min_atr:
             return 0.0
 
-        max_risk_value = equity * self.config.risk_per_trade_pct
+        max_risk_value = equity * self.config.risk_per_trade_pct * self.leverage
         stop_distance = atr * self.config.atr_multiplier
 
         if stop_distance <= 0:

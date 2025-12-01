@@ -201,6 +201,7 @@ class MultiAgentBacktesterV1:
 
         # Reset risk engine internal state
         self.risk_engine.reset(initial_balance)
+        self.risk_engine.leverage = leverage
 
         if verbose:
             print("\n=== Multi-Agent Backtester ===")
@@ -251,13 +252,21 @@ class MultiAgentBacktesterV1:
             if not actions:
                 continue
 
-            final_action = self.coordinator.decide(actions)
+            raw_action = self.coordinator.decide(actions)
+
+            # Map PPO actions → RiskEngine directions
+            # PPO: 0=hold, 1=long, 2=short
+            # RiskEngine: 0=flat, 1=long, -1=short
+            if raw_action == 2:
+                final_direction = -1
+            else:
+                final_direction = raw_action
 
             # --------------------------------------------------------
             # 2) Risk Engine Decision (entry / exit / kill-switch)
             # --------------------------------------------------------
             risk_output = self.risk_engine.process_signal(
-                direction=final_action,
+                direction=final_direction,
                 price=price,
                 equity=balance,
                 atr=atr_value,

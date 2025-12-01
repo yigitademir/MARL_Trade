@@ -97,6 +97,13 @@ def experiment_no_leverage(bt, run_dir):
     with open(f"{out_dir}/summary.json", "w") as f:
         json.dump(summary, f, indent=4)
 
+    print("✔ Experiment A (No leverage) done")
+    print("\nExperiment A — No Leverage:")
+    print(f"  ROI: {summary['roi_pct']:.2f}%")
+    print(f"  MaxDD: {summary['max_drawdown_pct']:.2f}%")
+    print(f"  Trades: {summary['trades']}")
+    print("-" * 60)
+
 
 def experiment_random_agent(data, models, run_dir):
     """Experiment B — Replace 5m agent with a random-action agent."""
@@ -132,6 +139,13 @@ def experiment_random_agent(data, models, run_dir):
     with open(f"{out_dir}/summary.json", "w") as f:
         json.dump(summary, f, indent=4)
 
+    print("✔ Experiment B (Random 5m) done")
+    print("\nExperiment B — Random 5m Agent:")
+    print(f"  ROI: {summary['roi_pct']:.2f}%")
+    print(f"  MaxDD: {summary['max_drawdown_pct']:.2f}%")
+    print(f"  Trades: {summary['trades']}")
+    print("-" * 60)
+
 
 def experiment_drop_worst(data, models, run_dir):
     """Experiment C — Remove worst agent (4h) and retest multi-agent system."""
@@ -162,6 +176,13 @@ def experiment_drop_worst(data, models, run_dir):
     with open(f"{out_dir}/summary.json", "w") as f:
         json.dump(summary, f, indent=4)
 
+    print("✔ Experiment C (Drop 4h) done")
+    print("\nExperiment C — Drop 4h Agent:")
+    print(f"  ROI: {summary['roi_pct']:.2f}%")
+    print(f"  MaxDD: {summary['max_drawdown_pct']:.2f}%")
+    print(f"  Trades: {summary['trades']}")
+    print("-" * 60)
+
 
 def experiment_single_agent(data, models, run_dir):
     """Experiment D — Run only the 15m agent for isolation analysis."""
@@ -191,6 +212,13 @@ def experiment_single_agent(data, models, run_dir):
     trades.to_csv(f"{out_dir}/trades.csv", index=False)
     with open(f"{out_dir}/summary.json", "w") as f:
         json.dump(summary, f, indent=4)
+
+    print("✔ Experiment D (Single 15m) done")
+    print("\nExperiment D — Single 15m Agent:")
+    print(f"  ROI: {summary['roi_pct']:.2f}%")
+    print(f"  MaxDD: {summary['max_drawdown_pct']:.2f}%")
+    print(f"  Trades: {summary['trades']}")
+    print("-" * 60)
 
 
 # ============================================================
@@ -258,18 +286,12 @@ def main():
     print("\n Running Controlled Experiments...\n")
 
     experiment_no_leverage(bt, run_dir)
-    print("  ✔ Experiment A (No leverage) done")
-
     experiment_random_agent(data, models, run_dir)
-    print("  ✔ Experiment B (Random 5m) done")
-
     experiment_drop_worst(data, models, run_dir)
-    print("  ✔ Experiment C (Drop 4h) done")
-
     experiment_single_agent(data, models, run_dir)
-    print("  ✔ Experiment D (Single 15m) done")
 
     print("\n All controlled experiments completed.\n")
+
 
     # ============================================================
     # Per-Agent Behavioral Statistics
