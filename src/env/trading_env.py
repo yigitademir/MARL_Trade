@@ -1,4 +1,4 @@
-# ENV_VERSION = "1.0.0"
+
 
 import numpy as np
 import pandas as pd
@@ -46,7 +46,7 @@ class TradingEnv(gym.Env):
 
         # Risk engine and risk-aware state
         self.risk_engine = RiskEngine(RiskConfig())
-        self.atr_col = "ATR_14" 
+        self.atr_col = "ATR_14_norm" 
 
         # Split equity into balance + unrealized PnL (backtester style)
         self.balance = float(initial_balance)
@@ -287,9 +287,6 @@ class TradingEnv(gym.Env):
         # Drawdown penalty
         dd_penalty = 0.25 * self.current_drawdown
 
-        # Turnover penalty: discourage overtrading
-        turnover_penalty = 0.01 if trade_executed else 0.0
-
         # Unrealized PnL stats for hold bonus
         if self.current_position is not None:
             unrealized_pnl_pct = unrealized_pnl / max(self.initial_balance, 1e-8)
@@ -301,7 +298,6 @@ class TradingEnv(gym.Env):
         reward = (
             base_reward
             - dd_penalty
-            - turnover_penalty
             + hold_bonus
         )
 
@@ -312,6 +308,8 @@ class TradingEnv(gym.Env):
         # --------------------------------
         obs = self._get_observation()
         info = self._get_info()
+        if risk_output["exit_reason"] == "SIZE_TOO_SMALL":
+            print(f"[DEBUG] Entry blocked at step={self.current_step}, ATR={atr_value}, equity={self.balance}")
 
         info.update({
             "price_return": float((curr_price - prev_price) / prev_price),
@@ -322,7 +320,6 @@ class TradingEnv(gym.Env):
             "reward_breakdown": {
                 "base_log_return": base_reward,
                 "dd_penalty": dd_penalty,
-                "turnover_penalty": turnover_penalty,
                 "hold_bonus": hold_bonus,
             },
         })

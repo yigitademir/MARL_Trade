@@ -228,6 +228,7 @@ def evaluate_model(model, test_df, args):
 
     episodes = 10
     rois, pnls, sharpe, dd, rewards = [], [], [], [], []
+    action_counts = {0: 0, 1: 0, 2: 0}
 
     for _ in range(episodes):
         obs, info = test_env.reset()
@@ -240,18 +241,25 @@ def evaluate_model(model, test_df, args):
             total_r += reward
             done = terminated or truncated
 
+            # Count actions
+            a_int = int(action)
+            if a_int in action_counts:
+                action_counts[a_int] += 1
+
         rewards.append(total_r)
         rois.append(info["roi"])
-        pnls.append(info["balance"] - args.initial_balance)
+        pnls.append(info["equity"] - args.initial_balance)
         sharpe.append(info["sharpe_ratio"])
         dd.append(info["max_drawdown"])
+
+    print("Action counts over eval episodes:", action_counts)
 
     return {
         "mean_reward": float(np.mean(rewards)),
         "mean_roi": float(np.mean(rois)),
         "mean_pnl": float(np.mean(pnls)),
         "mean_sharpe": float(np.mean(sharpe)),
-        "mean_max_dd": float(np.mean(dd)),   # fraction (0.25 = 25%)
+        "mean_max_dd": float(np.mean(dd)),
     }
 
 
