@@ -1,181 +1,42 @@
-# src/risk/risk_engine.py
-
-from __future__ import annotations
-
+import numpy as np
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
 
 
 @dataclass
 class RiskConfig:
-    """
-    Configuration for RiskEngine v1.
-
-    All values are fractions (0.02 = 2%).
-    """
-    risk_per_trade_pct: float = 0.02       # Equity risk per trade
-    atr_multiplier: float = 2.0            # SL distance = ATR * 2
-    rr_take_profit: float = 2.0            # TP distance = SL * 2
-    max_drawdown_pct: float = 0.30         # 30% kill-switch
-    min_atr: float = 1e-6                  # Guard against zero ATR
+    max_risk_per_trade: float = 0.01        # 1% of equity
+    max_leverage: float = 5.0
+    max_drawdown_limit: float = 0.30        # 30% kill-switch
+    atr_volatility_cap: float = 3.0        # upper bound for ATR_pct_norm
+    atr_entry_sensitivity: float = 1.0     # lower = more trades, higher = fewer trades
 
 
 class RiskEngine:
     """
-    RiskEngine v1 — deterministic, rule-based risk management.
+    Updated Risk Engine for use with ATR_pct_norm.
 
-    Responsibilities:
-    -----------------
-    • Apply fixed % risk-per-trade
-    • Compute ATR-based SL/TP levels
-    • Perform position sizing
-    • Track drawdown and kill-switch
-    • Check entry/exit conditions
-
-    This engine is independent of PPO and works both for:
-      • backtesting
-      • later integration into the RL environment (optional)
+    Main ideas:
+    - ATR_pct_norm is already stable → no absolute thresholds.
+    - Volatility affects position sizing and when to allow entries.
+    - Signal overrides must be smooth, not binary.
     """
 
-    def __init__(self, config: Optional[RiskConfig] = None) -> None:
-        self.config = config or RiskConfig()
-
-        # Drawdown state
-        self.peak_equity: Optional[float] = None
-        self.current_drawdown: float = 0.0
-        self.kill_switch_triggered: bool = False
-        # Leverage multiplier for position sizing (set externally)
-        self.leverage = 1.0
-
-    # --------------------------------------------------------------
-    # Lifecycle
-    # --------------------------------------------------------------
-
-    def reset(self, initial_equity: float) -> None:
-        """
-        Reset internal state at the beginning of a backtest or episode.
-        """
-        self.peak_equity = float(initial_equity)
-        self.current_drawdown = 0.0
+    def __init__(self, config: RiskConfig):
+        self.config = config
+        self.initial_equity = 0.0
         self.kill_switch_triggered = False
 
-    def update_equity(self, equity: float) -> float:
-        """
-        Update equity and drawdown tracking. Trigger kill-switch if needed.
+    # ============================================================
+    # RESET
+    # ============================================================
 
-        Returns
-        -------
-        float : current drawdown fraction (0.25 = 25%)
-        """
-        if self.peak_equity is None:
-            self.peak_equity = float(equity)
+    def reset(self, initial_equity: float):
+        self.initial_equity = initial_equity
+        self.kill_switch_triggered = False
 
-        if equity > self.peak_equity:
-            self.peak_equity = float(equity)
-
-        self.current_drawdown = (
-            (self.peak_equity - equity) / max(self.peak_equity, 1e-8)
-        )
-
-        if self.current_drawdown >= self.config.max_drawdown_pct:
-            self.kill_switch_triggered = True
-
-        return self.current_drawdown
-
-    # --------------------------------------------------------------
-    # Position size and levels
-    # --------------------------------------------------------------
-
-    def compute_position_size(self, equity: float, atr: float) -> float:
-        """
-        Compute size from risk value and ATR distance.
-
-        Size = max_risk_value / stop_distance
-        """
-        atr = float(atr)
-
-        if atr < self.config.min_atr:
-            return 0.0
-
-        max_risk_value = equity * self.config.risk_per_trade_pct * self.leverage
-        stop_distance = atr * self.config.atr_multiplier
-
-        if stop_distance <= 0:
-            return 0.0
-
-        size = max_risk_value / stop_distance
-        return float(max(size, 0.0))
-
-    def compute_levels(self, direction: int, entry_price: float, atr: float) -> Dict[str, float]:
-        """
-        Generate ATR-based stop-loss and take-profit.
-
-        Long:
-            SL = entry - ATR * k
-            TP = entry + ATR * k * rr
-        Short:
-            SL = entry + ATR * k
-            TP = entry - ATR * k * rr
-        """
-        atr = float(atr)
-        entry_price = float(entry_price)
-        k = self.config.atr_multiplier
-        rr = self.config.rr_take_profit
-
-        if direction == 1:
-            sl = entry_price - atr * k
-            tp = entry_price + atr * k * rr
-        elif direction == -1:
-            sl = entry_price + atr * k
-            tp = entry_price - atr * k * rr
-        else:
-            raise ValueError(f"Invalid direction {direction}, expected 1 or -1")
-
-        return {"stop_loss": float(sl), "take_profit": float(tp)}
-
-    # --------------------------------------------------------------
-    # Exit logic
-    # --------------------------------------------------------------
-
-    def check_exit_conditions(
-        self,
-        price: float,
-        direction: int,
-        position: Dict[str, Any],
-    ) -> Optional[str]:
-        """
-        Check:
-        • stop-loss hit
-        • take-profit hit
-        • agent direction flip
-
-        Returns "SL", "TP", "SIGNAL_FLIP", or None.
-        """
-        pos_dir = position["direction"]
-        sl = position["stop_loss"]
-        tp = position["take_profit"]
-
-        # Stop-loss
-        if pos_dir == 1 and price <= sl:
-            return "SL"
-        if pos_dir == -1 and price >= sl:
-            return "SL"
-
-        # Take-profit
-        if pos_dir == 1 and price >= tp:
-            return "TP"
-        if pos_dir == -1 and price <= tp:
-            return "TP"
-
-        # Signal flip
-        if direction != pos_dir:
-            return "SIGNAL_FLIP"
-
-        return None
-
-    # --------------------------------------------------------------
-    # Main interface
-    # --------------------------------------------------------------
+    # ============================================================
+    # MAIN PROCESSOR
+    # ============================================================
 
     def process_signal(
         self,
@@ -183,89 +44,133 @@ class RiskEngine:
         price: float,
         equity: float,
         atr: float,
-        position: Optional[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        position: dict | None,
+    ):
         """
-        Main decision function.
-
-        Receives:
-            agent signal, price, equity, ATR, open position
-
-        Returns:
-            decision dictionary for the backtester
+        direction: +1 long, -1 short, 0 hold
+        atr: ATR_pct_norm (normalized)
         """
-        dd = self.update_equity(equity)
 
-        # Kill-switch → force exit, block entry
-        if self.kill_switch_triggered:
+        # Ensure ATR sanity: clip extreme feature values
+        atr = float(np.clip(atr, -self.config.atr_volatility_cap, self.config.atr_volatility_cap))
+
+        # 1) Check kill-switch (deep drawdowns)
+        if equity < self.initial_equity * (1.0 - self.config.max_drawdown_limit):
+            self.kill_switch_triggered = True
             return {
+                "kill_switch": True,
                 "should_enter": False,
                 "should_exit": position is not None,
                 "new_position": None,
-                "exit_reason": "KILL_SWITCH" if position else None,
-                "kill_switch": True,
-                "current_drawdown": dd,
             }
 
-        # Existing position: check for exit
-        if position is not None:
-            reason = self.check_exit_conditions(price, direction, position)
-            if reason is not None:
+        # 2) If already in a position → manage exit logic
+        if position:
+            should_exit = self._should_exit(direction, position)
+            return {
+                "kill_switch": False,
+                "should_enter": False,
+                "should_exit": should_exit,
+                "new_position": None,
+            }
+
+        # 3) If flat → check entry conditions
+        if position is None and direction != 0:
+            allow = self._entry_condition_from_atr(direction, atr)
+            if allow:
+                new_pos = self._construct_position(direction, price, equity, atr)
                 return {
-                    "should_enter": False,
-                    "should_exit": True,
-                    "new_position": None,
-                    "exit_reason": reason,
                     "kill_switch": False,
-                    "current_drawdown": dd,
+                    "should_enter": True,
+                    "should_exit": False,
+                    "new_position": new_pos,
                 }
-            return {
-                "should_enter": False,
-                "should_exit": False,
-                "new_position": None,
-                "exit_reason": None,
-                "kill_switch": False,
-                "current_drawdown": dd,
-            }
 
-        # No open position → agent wants flat
-        if direction == 0:
-            return {
-                "should_enter": False,
-                "should_exit": False,
-                "new_position": None,
-                "exit_reason": None,
-                "kill_switch": False,
-                "current_drawdown": dd,
-            }
-
-        # Compute size for new entry
-        size = self.compute_position_size(equity, atr)
-        if size <= 0.0:
-            return {
-                "should_enter": False,
-                "should_exit": False,
-                "new_position": None,
-                "exit_reason": "SIZE_TOO_SMALL",
-                "kill_switch": False,
-                "current_drawdown": dd,
-            }
-
-        # Build new position object
-        levels = self.compute_levels(direction, price, atr)
-        new_position = {
-            "direction": int(direction),
-            "entry_price": price,
-            "size": size,
-            "stop_loss": levels["stop_loss"],
-            "take_profit": levels["take_profit"],
+        # Default → no action
+        return {
+            "kill_switch": False,
+            "should_enter": False,
+            "should_exit": False,
+            "new_position": None,
         }
 
+    # ============================================================
+    # ENTRY LOGIC
+    # ============================================================
+
+    def _entry_condition_from_atr(self, direction: int, atr: float) -> bool:
+        """
+        ATR_pct_norm already behaves like a volatility z-score.
+        Low ATR → trending market → easier entries
+        High ATR → choppy → restrict entries
+
+        Formula:
+            permit = exp(-|atr| * sensitivity)
+        """
+
+        sensitivity = self.config.atr_entry_sensitivity
+
+        # Exponential decay gating
+        entry_prob = float(np.exp(-abs(atr) * sensitivity))
+
+        # If volatility is extreme → reject
+        if abs(atr) > self.config.atr_volatility_cap:
+            return False
+
+        # Threshold: permit entries when probability is reasonable
+        return entry_prob > 0.2      # Very permissive threshold (tweakable)
+
+    # ============================================================
+    # EXIT LOGIC
+    # ============================================================
+
+    def _should_exit(self, direction: int, position: dict) -> bool:
+        """
+        Exit conditions:
+        - Opposite signal
+        - Trailing stop (simple version)
+        """
+
+        if direction == -position["direction"]:
+            return True
+
+        # Trailing stop (based on price move)
+        entry = position["entry_price"]
+        d = position["direction"]
+        size = position["size"]
+
+        # Unrealized PnL %
+        pnl_pct = (position["current_price"] - entry) / entry * d
+
+        if pnl_pct < -0.02:  # -2% loss threshold
+            return True
+
+        return False
+
+    # ============================================================
+    # POSITION SIZING
+    # ============================================================
+
+    def _construct_position(self, direction: int, price: float, equity: float, atr: float):
+        """
+        ATR_pct_norm → used to scale position size.
+
+        Lower ATR → bigger size allowed
+        Higher ATR → smaller size
+        """
+
+        # Volatility-based size reduction
+        vol_scale = float(np.exp(-abs(atr)))     # Smooth scaling
+
+        # Money at risk
+        capital_at_risk = equity * self.config.max_risk_per_trade * vol_scale
+
+        # Position size (contracts)
+        size = capital_at_risk * self.config.max_leverage / max(price, 1e-8)
+
         return {
-            "should_enter": True,
-            "should_exit": False,
-            "new_position": new_position,
-            "exit_reason": None,
-            "kill_switch": False,
-            "current_drawdown": dd,
+            "direction": direction,
+            "entry_price": price,
+            "size": size,
+            "current_price": price,
         }

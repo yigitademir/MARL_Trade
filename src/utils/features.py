@@ -10,10 +10,9 @@ def generate_log_returns(df: pd.DataFrame) -> pd.DataFrame:
     df["log_return"] = np.log(df["close"] / df["close"].shift(1))
     return df
 
-def add_ema(df: pd.DataFrame, spans = [10,50]) -> pd.DataFrame:
+def add_ema(df: pd.DataFrame, spans=[10, 50]) -> pd.DataFrame:
     """
-    Adds exponential moving average to the dataframe
-    Default spans: 10 and 50 periods
+    Adds EMA indicators.
     """
     df = df.copy()
     for span in spans:
@@ -22,8 +21,7 @@ def add_ema(df: pd.DataFrame, spans = [10,50]) -> pd.DataFrame:
 
 def add_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     """
-    Adds RSI to the dataframe
-    Default period is 14
+    Adds RSI indicator.
     """
     df = df.copy()
     delta = df["close"].diff()
@@ -34,30 +32,25 @@ def add_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     avg_gain = gain.rolling(window=period).mean()
     avg_loss = loss.rolling(window=period).mean()
 
-    rs = avg_gain / (avg_loss + 1e-10) # to avoid div by 0
-    df[f"RSI_{period}"] = 100 - (100 / (1+rs))
-    
+    rs = avg_gain / (avg_loss + 1e-10)
+    df[f"RSI_{period}"] = 100 - (100 / (1 + rs))
+
     return df
 
-def add_rolling_volatility(df:pd.DataFrame, period: int = 20) -> pd.DataFrame:
+def add_rolling_volatility(df: pd.DataFrame, period: int = 20) -> pd.DataFrame:
     """
-    Adds rolling volatility to the dataframe using standard deviation of log returns.
-    Default period is 20
-    !! Requires "log_return" column 
+    Adds rolling volatility using std(log_return).
     """
     df = df.copy()
     if "log_return" not in df.columns:
         raise ValueError("log_return column required to compute volatility.")
 
     df[f"volatility_{period}"] = df["log_return"].rolling(window=period).std()
-
     return df
 
 def compute_atr(df, period=14):
     """
-    Computes the Average True Range (ATR) using standard formula:
-    TR = max(high-low, abs(high-prev_close), abs(low-prev_close))
-    ATR = TR rolling mean
+    Computes ATR(14).
     """
     df = df.copy()
 
@@ -69,47 +62,93 @@ def compute_atr(df, period=14):
 
     df["true_range"] = df[["high_low", "high_prev", "low_prev"]].max(axis=1)
 
-    # ATR14
     df["ATR_14"] = df["true_range"].rolling(window=period).mean()
 
-    # Clean up
     df.drop(columns=["prev_close", "high_low", "high_prev", "low_prev"], inplace=True)
 
     return df
 
+# ============================================================
+# NEW: ATR percentage + normalized ATR percentage
+# ============================================================
+
+def add_atr_percentage(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds ATR percentage features:
+    ATR_pct      = ATR / close
+    ATR_pct_norm = z-score normalized ATR_pct
+    """
+    df = df.copy()
+
+    if "ATR_14" not in df.columns:
+        raise ValueError("ATR_14 missing, compute_atr must be called first.")
+
+    # ATR percentage
+    df["ATR_pct"] = df["ATR_14"] / df["close"]
+
+    # Clip extremes (0.000001 – 1)
+    df["ATR_pct"] = df["ATR_pct"].clip(lower=1e-6, upper=1.0)
+
+    # Rolling normalization
+    rolling_mean = df["ATR_pct"].rolling(window=200).mean()
+    rolling_std = df["ATR_pct"].rolling(window=200).std()
+
+    df["ATR_pct_norm"] = (df["ATR_pct"] - rolling_mean) / (rolling_std + 1e-8)
+    df["ATR_pct_norm"] = df["ATR_pct_norm"].fillna(0)
+
+    return df
+
+# ============================================================
+
 def normalize_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Normalizes all feature columns(comes after "volume" column).
-    Applies Z-score normalization
+    Normalizes all features after 'volume' using z-score.
+    Does NOT normalize ATR_pct (we already normalize manually).
     """
-
     df = df.copy()
     if "volume" not in df.columns:
         raise ValueError("'volume' column not found.")
     
-    # Find feature columns
     start_idx = df.columns.get_loc("volume") + 1
     feature_cols = df.columns[start_idx:]
 
     for col in feature_cols:
+        if col in ["ATR_pct", "ATR_pct_norm"]:
+            continue  # Do NOT z-normalize ATR_pct again
         mean = df[col].mean()
         std = df[col].std()
-        df[f"{col}_norm"] = (df[col] - mean) / (std + 1e-8) # Avoid div by 0
+        df[f"{col}_norm"] = (df[col] - mean) / (std + 1e-8)
 
     return df
 
-def save_feature_dataset(
-    df: pd.DataFrame,
-    symbol: str,
-    timeframe: str,
-    output_dir: str = "data/processed",
-    file_format: str = "parquet") -> None:
-    """
-    Saves the feature-enhanced DataFrame to disk.
-    File name: SYMBOL_TIMEFRAME_features.{parquet/csv}
-    """
-    import os
+# ============================================================
 
+def clean_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Cleans NaN, inf, extreme values.
+    """
+    df = df.copy()
+    print(" Cleaning features...")
+
+    df = df.ffill()
+    df = df.bfill()
+    df = df.fillna(0)
+    df = df.replace([np.inf, -np.inf], 0)
+
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    for col in numeric_cols:
+        mean = df[col].mean()
+        std = df[col].std()
+        if std > 0:
+            df[col] = df[col].clip(mean - 10*std, mean + 10*std)
+
+    return df
+
+def save_feature_dataset(df: pd.DataFrame, symbol: str, timeframe: str,
+                         output_dir: str = "data/processed", file_format: str = "parquet"):
+    """
+    Saves features to disk.
+    """
     os.makedirs(output_dir, exist_ok=True)
 
     symbol_clean = symbol.replace("/", "")
@@ -123,79 +162,34 @@ def save_feature_dataset(
 
     print(f"Features saved to: {filepath}")
 
-def clean_features(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Clean features: handle NaN, inf, and extreme values.
-    """
-    df = df.copy()
-    
-    print(" Cleaning features...")
-    
-    # 1. Forward fill NaN values (use previous valid value)
-    df = df.ffill()
-    
-    # 2. Backward fill remaining NaN (for start of series)
-    df = df.bfill()
-    
-    # 3. Replace any remaining NaN with 0
-    df = df.fillna(0)
-    
-    # 4. Replace infinity with large but finite values
-    df = df.replace([np.inf, -np.inf], [1e10, -1e10])
-    
-    # 5. Clip extreme values (prevent explosions)
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
-    for col in numeric_cols:
-        if col != 'timestamp':
-            # Clip to reasonable range
-            mean = df[col].mean()
-            std = df[col].std()
-            if std > 0:
-                # Keep values within ±10 standard deviations
-                df[col] = df[col].clip(mean - 10*std, mean + 10*std)
-    
-    # 6. Final safety check
-    nan_count = df.isnull().sum().sum()
-    inf_count = np.isinf(df.select_dtypes(include=[np.number])).sum().sum()
-    
-    print(f"NaN remaining: {nan_count}")
-    print(f"Inf remaining: {inf_count}")
-    
-    if nan_count > 0 or inf_count > 0:
-        print(" WARNING: Still have invalid values, replacing with 0")
-        df = df.fillna(0)
-        df = df.replace([np.inf, -np.inf], 0)
-    
-    print("Features cleaned")
-    
-    return df
+# ============================================================
 
 def generate_all_features(df: pd.DataFrame, filename: str, config: dict) -> pd.DataFrame:
     """
-    Full feature pipeline with cleaning!
+    Full feature engineering pipeline.
     """
     import os
-    
-    # Parse symbol and timeframe from filename
     base = os.path.basename(filename).replace(".parquet", "").replace(".csv", "")
     parts = base.split("_")
     symbol_part = "_".join(parts[:-1])
     tf = parts[-1]
-    
+
     print(f"Generating features for {symbol_part} {tf}...")
-    
-    # Generate features
+
     df = generate_log_returns(df)
     df = add_ema(df, spans=[10, 50])
     df = add_rsi(df, period=14)
     df = add_rolling_volatility(df, period=20)
     df = compute_atr(df, period=14)
+
+    # NEW ATR percentage feature
+    df = add_atr_percentage(df)
+
+    # Z-normalize everything except ATR_pct (already normalized)
     df = normalize_features(df)
-    
-    # CRITICAL: Clean features!
+
     df = clean_features(df)
-    
-    # Save
+
     save_feature_dataset(
         df,
         symbol=symbol_part,
@@ -203,19 +197,19 @@ def generate_all_features(df: pd.DataFrame, filename: str, config: dict) -> pd.D
         output_dir=config.get("feature_output_path", "data/processed"),
         file_format=config.get("format", "parquet")
     )
-    
-    return df
-def inspect_outliers(df:pd.DataFrame, threshold: float=3.0) -> pd.DataFrame:
-    """
-    Prints a summary of outliers falls outside of threshold for each normalized column
-    """
 
-    # Select normalized columns
-    norm_cols= [col for col in df.columns if col.endswith("_norm")]
+    return df
+
+# ============================================================
+
+def inspect_outliers(df: pd.DataFrame, threshold: float = 3.0) -> pd.DataFrame:
+    """
+    Print summary of outliers in normalized columns.
+    """
+    norm_cols = [col for col in df.columns if col.endswith("_norm")]
 
     for col in norm_cols:
-        outliers = df[(df[col] > threshold) | (df[col] < -threshold) ]
+        outliers = df[(df[col] > threshold) | (df[col] < -threshold)]
         count = len(outliers)
-        total = len(df)
-        pct = (count/total) * 100
+        pct = (count / len(df)) * 100
         print(f"{col:20} -> {count:5} outliers ({pct:.2f}%)")
