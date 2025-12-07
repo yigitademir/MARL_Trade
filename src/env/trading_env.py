@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import gymnasium as gym
 from gymnasium import spaces
+from src.risk.risk_engine import RiskEngine, RiskConfig
 
 
 class TradingEnv(gym.Env):
@@ -42,6 +43,14 @@ class TradingEnv(gym.Env):
 
         # Actions: 0=Hold, 1=Long, 2=Short
         self.action_space = spaces.Discrete(3)
+
+        # Risk engine and risk-aware state
+        self.risk_engine = RiskEngine(RiskConfig())
+        self.atr_col = "ATR_14" 
+
+        # Split equity into balance + unrealized PnL (backtester style)
+        self.balance = float(initial_balance)
+        self.current_position = None  # dict or None
 
         # Features (exclude timestamp)
         # Preferred consistent ordering
@@ -86,9 +95,14 @@ class TradingEnv(gym.Env):
         self.current_step = self.window_size
         self.episode_step = 0
 
+        # Equity / balance split
         self.equity = float(self.initial_balance)
+        self.balance = float(self.initial_balance)
+        self.current_position = None
+
         self.position = 0
         self.entry_price = 0.0
+        self.unrealized_pnl = 0.0
 
         self.total_trades = 0
         self.winning_trades = 0
@@ -100,81 +114,161 @@ class TradingEnv(gym.Env):
         self.last_step_return = 0.0
         self.returns_history = []
 
+        # Reset risk engine
+        self.risk_engine.reset(self.initial_balance)
+
         return self._get_observation(), self._get_info()
 
     # ------------------------------------------------------------------ #
     def step(self, action: int):
+        # --------------------------------
+        # 0) Time / episode bookkeeping
+        # --------------------------------
         self.current_step += 1
         self.episode_step += 1
 
-        # -----------------------------
-        # 1) Episode termination flags
-        # -----------------------------
         terminated_data_end = self.current_step >= len(self.df) - 1
         truncated_horizon = self.episode_step >= self.max_episode_steps
 
         terminated = terminated_data_end
         truncated = truncated_horizon and not terminated_data_end
 
+        # If episode is over because of data, still build a last obs/info
         prev_price = self.df.loc[self.current_step - 1, "close"]
         curr_price = self.df.loc[self.current_step, "close"]
 
         prev_equity = self.equity
-        prev_position = self.position
 
-        # -----------------------------
-        # 2) ACTION LOGIC
-        # -----------------------------
+        # --------------------------------
+        # 1) Map PPO action -> direction
+        # --------------------------------
+        # PPO action space: 0 = HOLD, 1 = LONG, 2 = SHORT
         if action == 1:
-            target_position = 1    # Long
+            desired_direction = 1
         elif action == 2:
-            target_position = -1   # Short
+            desired_direction = -1
         else:
-            target_position = prev_position  # Hold
+            desired_direction = 0
 
-        trade_executed = (target_position != prev_position)
+        # --------------------------------
+        # 2) Call RiskEngine
+        # --------------------------------
+        atr_value = float(self.df.loc[self.current_step, self.atr_col])
 
-        # -----------------------------
-        # 3) FEES
-        # -----------------------------
-        if trade_executed:
-            fee = self.transaction_cost * prev_equity
-            self.equity -= fee
+        risk_output = self.risk_engine.process_signal(
+            direction=desired_direction,
+            price=float(curr_price),
+            equity=float(self.balance),   # realized equity for sizing
+            atr=atr_value,
+            position=self.current_position,
+        )
+
+        trade_executed = False
+        unrealized_pnl = 0.0
+        unrealized_pnl_pct = 0.0
+
+        # --------------------------------
+        # 3) Handle kill-switch
+        # --------------------------------
+        if risk_output["kill_switch"]:
+            # If there is an open position, close it immediately
+            if self.current_position is not None:
+                d = self.current_position["direction"]
+                entry = self.current_position["entry_price"]
+                size = self.current_position["size"]
+                realized = size * (float(curr_price) - entry) * d
+                self.balance += realized
+                trade_executed = True
+
+            self.current_position = None
+            self.position = 0
+            self.entry_price = None
+
+            # Update equity after closing
+            self.equity = self.balance
+            self.current_drawdown = risk_output["current_drawdown"]
+            self.max_drawdown = max(self.max_drawdown, self.current_drawdown)
+
+            # Reward for kill-switch step (equity may have changed)
+            equity_ratio = self.equity / max(prev_equity, 1e-8)
+            log_ret = float(np.log(equity_ratio))
+            self.last_step_return = log_ret
+            self.returns_history.append(log_ret)
+
+            # Simple reward using log-return (no extra shaping here)
+            reward = float(np.clip(150.0 * log_ret, -1.0, 1.0))
+
+            obs = self._get_observation()
+            info = self._get_info()
+            info.update({
+                "equity_log_return": log_ret,
+                "trade_executed": trade_executed,
+                "kill_switch": True,
+            })
+            # Treat kill-switch as terminal event
+            return obs, reward, True, False, info
+
+        # --------------------------------
+        # 4) Handle exits (SL / TP / signal flip)
+        # --------------------------------
+        if risk_output["should_exit"] and self.current_position is not None:
+            d = self.current_position["direction"]
+            entry = self.current_position["entry_price"]
+            size = self.current_position["size"]
+
+            realized = size * (float(curr_price) - entry) * d
+            self.balance += realized
+            trade_executed = True
             self.total_trades += 1
+            if realized > 0:
+                self.winning_trades += 1
+
+            self.current_position = None
+            self.position = 0
+            self.entry_price = None
+
+        # --------------------------------
+        # 5) Handle new entries
+        # --------------------------------
+        if risk_output["should_enter"]:
+            pos = risk_output["new_position"]
+
+            # Apply transaction fee on equity
+            fee = self.transaction_cost * self.balance
+            self.balance -= fee
+
+            self.current_position = pos.copy()
+            self.current_position["notional_size"] = pos["size"]
+
+            self.position = pos["direction"]
+            self.entry_price = pos["entry_price"]
+
+            trade_executed = True
+            self.total_trades += 1  # win counter updated on exit
+
+        # --------------------------------
+        # 6) Mark-to-market equity
+        # --------------------------------
+        if self.current_position is None:
+            unrealized_pnl = 0.0
         else:
-            fee = 0.0
+            d = self.current_position["direction"]
+            entry = self.current_position["entry_price"]
+            size = self.current_position["size"]
+            unrealized_pnl = size * (float(curr_price) - entry) * d
 
-        # -----------------------------
-        # 4) POSITION UPDATE
-        # -----------------------------
-        self.position = target_position
-        if trade_executed:
-            self.entry_price = curr_price
+        self.equity = self.balance + unrealized_pnl
+        self.unrealized_pnl = unrealized_pnl
 
-        # -----------------------------
-        # 5) EQUITY DYNAMICS
-        #    (price move + leverage)
-        # -----------------------------
-        price_return = (curr_price - prev_price) / prev_price
-        effective_return = self.position * price_return * self.leverage
-
-        # Update equity with leveraged return
-        self.equity *= (1 + effective_return)
-
-        # Log-return on EQUITY (PPO-friendly)
+        # Log-return on equity
         equity_ratio = self.equity / max(prev_equity, 1e-8)
         log_ret = float(np.log(equity_ratio))
-
-        # We keep the field name for compatibility, but now it stores log-return
         self.last_step_return = log_ret
         self.returns_history.append(log_ret)
 
-        if trade_executed and log_ret > 0:
-            self.winning_trades += 1
-
-        # -----------------------------
-        # 6) DRAWDOWN TRACKING
-        # -----------------------------
+        # --------------------------------
+        # 7) Drawdown tracking
+        # --------------------------------
         if self.equity > self.peak_equity:
             self.peak_equity = self.equity
 
@@ -184,29 +278,24 @@ class TradingEnv(gym.Env):
 
         self.max_drawdown = max(self.max_drawdown, self.current_drawdown)
 
-        # -----------------------------
-        # 7) UNREALIZED PNL (for hold bonus)
-        # -----------------------------
-        if self.position != 0 and self.entry_price is not None:
-            unrealized_pnl = (curr_price - self.entry_price) * self.position * self.leverage
-            unrealized_pnl_pct = unrealized_pnl / max(self.initial_balance, 1e-8)
-        else:
-            unrealized_pnl = 0.0
-            unrealized_pnl_pct = 0.0
-
-        # -----------------------------
-        # 8) REWARD DESIGN (log-return based)
-        # -----------------------------
+        # --------------------------------
+        # 8) Reward design (same structure, now using risk-aware equity)
+        # --------------------------------
         # Base term: scaled equity log-return
-        base_reward = 150.0 * log_ret 
+        base_reward = 150.0 * log_ret
 
-        # Drawdown penalty: higher drawdown → stronger negative reward
-        dd_penalty = 0.25 * self.current_drawdown  
+        # Drawdown penalty
+        dd_penalty = 0.25 * self.current_drawdown
 
         # Turnover penalty: discourage overtrading
         turnover_penalty = 0.01 if trade_executed else 0.0
 
-        # Small bonus for holding profitable positions (unrealized PnL > 0)
+        # Unrealized PnL stats for hold bonus
+        if self.current_position is not None:
+            unrealized_pnl_pct = unrealized_pnl / max(self.initial_balance, 1e-8)
+        else:
+            unrealized_pnl_pct = 0.0
+
         hold_bonus = 0.02 * unrealized_pnl_pct if unrealized_pnl > 0 else 0.0
 
         reward = (
@@ -216,22 +305,20 @@ class TradingEnv(gym.Env):
             + hold_bonus
         )
 
-        # Final clipping for PPO stability
         reward = float(np.clip(reward, -1.0, 1.0))
 
-        # -----------------------------
-        # 9) BUILD OUTPUTS
-        # -----------------------------
+        # --------------------------------
+        # 9) Build outputs
+        # --------------------------------
         obs = self._get_observation()
         info = self._get_info()
 
         info.update({
-            "leverage": self.leverage,
-            "price_return": float(price_return),
-            "effective_return": float(effective_return),
+            "price_return": float((curr_price - prev_price) / prev_price),
             "equity_log_return": log_ret,
             "trade_executed": trade_executed,
             "unrealized_pnl": float(unrealized_pnl),
+            "current_drawdown": float(self.current_drawdown),
             "reward_breakdown": {
                 "base_log_return": base_reward,
                 "dd_penalty": dd_penalty,
@@ -249,23 +336,40 @@ class TradingEnv(gym.Env):
 
     # ------------------------------------------------------------------ #
     def _get_info(self):
+        # Sharpe over last 20 log-returns
         sharpe = 0.0
         if len(self.returns_history) >= 20:
             arr = np.array(self.returns_history[-20:])
-            if arr.std() > 1e-8:
-                sharpe = float(arr.mean() / arr.std())
+            std = arr.std()
+            if std > 1e-8:
+                sharpe = float(arr.mean() / std)
+
+        # Safe entry_price
+        if isinstance(self.entry_price, (int, float)):
+            entry_price = float(self.entry_price)
+        else:
+            entry_price = 0.0
+
+        # Safe unrealized pnl
+        unrealized = float(self.unrealized_pnl) if hasattr(self, "unrealized_pnl") else 0.0
 
         return {
             "equity": float(self.equity),
-            "balance": float(self.equity),
+            "balance": float(self.balance),    # FIXED: was self.equity
             "position": int(self.position),
-            "entry_price": float(self.entry_price),
+
+            "entry_price": entry_price,
+            "unrealized_pnl": unrealized,
+
             "total_trades": int(self.total_trades),
             "winning_trades": int(self.winning_trades),
             "win_rate": float(self.winning_trades / max(1, self.total_trades)),
+
             "max_drawdown": float(self.max_drawdown),
             "current_drawdown": float(self.current_drawdown),
+
             "roi": float((self.equity - self.initial_balance) / self.initial_balance * 100.0),
+
             "last_step_return": float(self.last_step_return),
             "sharpe_ratio": float(sharpe),
         }

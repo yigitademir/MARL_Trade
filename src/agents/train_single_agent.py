@@ -251,7 +251,7 @@ def evaluate_model(model, test_df, args):
         "mean_roi": float(np.mean(rois)),
         "mean_pnl": float(np.mean(pnls)),
         "mean_sharpe": float(np.mean(sharpe)),
-        "mean_max_dd": float(np.mean(dd)),
+        "mean_max_dd": float(np.mean(dd)),   # fraction (0.25 = 25%)
     }
 
 
@@ -282,14 +282,18 @@ def append_results(args, eval_stats, model_path):
 
     write_header = not os.path.exists(csv_path)
 
-    import csv
     with open(csv_path, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=row.keys())
         if write_header:
             writer.writeheader()
         writer.writerow(row)
 
+
 def append_results_to_csv(args, eval_stats, save_path):
+    """
+    Legacy / additional summary CSV:
+    logs/results.csv
+    """
     os.makedirs("logs", exist_ok=True)
     csv_path = "logs/results.csv"
 
@@ -367,16 +371,28 @@ def main():
 
     # Evaluate model on unseen test set
     eval_stats = evaluate_model(model, test_df, args)
+
+    # Append to simple global CSV
     append_results_to_csv(args, eval_stats, model_path)
 
-    # Save evaluation results
+    # Print metrics in a stable format
+    final_equity = args.initial_balance + eval_stats["mean_pnl"]
+    print("\n====== EVALUATION SUMMARY ======")
+    print(f"Final equity  : {final_equity:.2f}")
+    print(f"ROI           : {eval_stats['mean_roi']:.2f}%")
+    print(f"PnL           : {eval_stats['mean_pnl']:.2f}")
+    print(f"Sharpe        : {eval_stats['mean_sharpe']:.4f}")
+    print(f"Max drawdown  : {eval_stats['mean_max_dd'] * 100:.2f}%")
+    print("================================\n")
+
+    # Save evaluation results (JSON)
     with open(f"{run_dir}/eval_results.json", "w") as f:
         json.dump(eval_stats, f, indent=4)
 
-    # Append summary line into logs/single_agent/results.csv
+    # Append detailed summary line into logs/single_agent/results.csv
     append_results(args, eval_stats, model_path)
 
-    print("\n🎉 Training complete!")
+    print("🎉 Training complete!")
     print(f"Model saved → {model_path}.zip")
     print(f"Eval ROI: {eval_stats['mean_roi']:.2f}%")
     print(f"Logs saved under: {run_dir}/\n")

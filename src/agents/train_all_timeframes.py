@@ -1,11 +1,12 @@
 """
 Train All Timeframes Script
 ===========================
+
 Runs train_single_agent.py sequentially for multiple timeframes
 and prints a clean summary table of ROI, PnL, Sharpe, MaxDD.
 
 Usage:
-    python agents/train_all_timeframes.py
+    python -m src.agents.train_all_timeframes
 """
 
 import os
@@ -59,7 +60,7 @@ def main():
     print("=" * 70 + "\n")
 
     # ---------------------------------------------------------
-    # TRAIN EACH TIMEFRAME ONCE (Popen version with live output)
+    # TRAIN EACH TIMEFRAME ONLY ONCE
     # ---------------------------------------------------------
     for tf in timeframes:
         print("\n" + "=" * 70)
@@ -82,6 +83,7 @@ def main():
 
         print(f"Running: {' '.join(cmd)}\n")
 
+        # Run once and capture all output
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -91,36 +93,43 @@ def main():
 
         output_lines = []
         for line in process.stdout:
-            print(line, end="")  # keep progress bar
+            print(line, end="")  # live output
             output_lines.append(line)
 
         process.wait()
+
         if process.returncode != 0:
-            print(f"Training failed for timeframe {tf}")
+            print(f"Training FAILED for timeframe {tf}")
             continue
 
         # -----------------------------------------------------
         # Extract metrics from output
         # -----------------------------------------------------
-        final_equity = roi = pnl = sharpe = max_dd = None
+        final_equity = roi = pnl = sharpe = max_dd = 0.0
 
         for line in output_lines:
-            line = line.strip()
+            L = line.strip()
 
-            if line.startswith("Final equity"):
-                final_equity = float(line.split(":")[-1].replace(",", "").strip())
+            if "Final equity" in L:
+                final_equity = float(L.split(":")[-1].replace(",", "").strip())
 
-            elif line.startswith("ROI"):
-                roi = float(line.split(":")[-1].replace("%", "").strip())
+            if L.startswith("ROI"):
+                roi = float(L.split(":")[-1].replace("%", "").strip())
 
-            elif line.startswith("PnL"):
-                pnl = float(line.split(":")[-1].strip())
+            if "PnL" in L:
+                try:
+                    pnl = float(L.split(":")[-1].strip())
+                except:
+                    pass
 
-            elif line.startswith("Sharpe"):
-                sharpe = float(line.split(":")[-1].strip())
+            if L.startswith("Sharpe"):
+                try:
+                    sharpe = float(L.split(":")[-1].strip())
+                except:
+                    pass
 
-            elif line.startswith("Max drawdown"):
-                max_dd = float(line.split(":")[-1].replace("%", "").strip())
+            if "Max drawdown" in L:
+                max_dd = float(L.split(":")[-1].replace("%", "").strip())
 
         all_results.append({
             "timeframe": tf,
@@ -147,10 +156,10 @@ def main():
         print(
             f"{r['timeframe']:<8} "
             f"{r['timesteps']:>10} "
-            f"{(r['ROI'] if r['ROI'] is not None else float('nan')):>10.2f} "
-            f"{(r['PnL'] if r['PnL'] is not None else float('nan')):>12.2f} "
-            f"{(r['Sharpe'] if r['Sharpe'] is not None else float('nan')):>10.3f} "
-            f"{(r['MaxDD'] if r['MaxDD'] is not None else float('nan')):>10.3f}"
+            f"{r['ROI']:>10.2f} "
+            f"{r['PnL']:>12.2f} "
+            f"{r['Sharpe']:>10.3f} "
+            f"{r['MaxDD']:>10.3f}"
         )
 
     print("-" * 70)
