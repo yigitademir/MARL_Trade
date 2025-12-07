@@ -20,6 +20,8 @@ venv/
 # Logs
 logs/
 logs/*
+memory_bank/
+memory_bank/*
 
 # Results & CSV logs
 *.csv
