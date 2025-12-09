@@ -11,7 +11,7 @@ This script:
 5) Evaluates the agent on unseen test data
 6) Saves final model + config + evaluation results into a clean
    timestamped directory for reproducibility:
-   
+
    logs/single_agent/train_runs/<timestamp>/
    ├── model.zip
    ├── config.json
@@ -45,7 +45,7 @@ from src.env.trading_env import TradingEnv
 
 def parse_arguments():
     """Parse all CLI arguments used for training a single PPO agent."""
-    
+
     parser = argparse.ArgumentParser(description="Train single-agent PPO")
 
     # Data & timeframe selection
@@ -107,7 +107,7 @@ def create_run_directories(args):
 
 def load_data(args):
     """Load processed feature data for the selected timeframe."""
-    
+
     print("\n" + "=" * 70)
     print(f"LOADING DATA FOR {args.symbol} @ {args.timeframe}")
     print("=" * 70)
@@ -127,7 +127,7 @@ def load_data(args):
 
 def split_data(df, train_ratio=0.7, val_ratio=0.15):
     """Split the dataset into train, val, test partitions."""
-    
+
     df = df.sort_values("timestamp").reset_index(drop=True)
     n = len(df)
 
@@ -187,27 +187,42 @@ def create_environments(train_df, val_df, args, run_dir):
 # ============================================================
 
 def create_ppo_model(train_env, tb_dir, args):
-    """Create PPO model with configured hyperparameters."""
+    """
+    Create PPO model with improved stability and exploration.
+    """
+
+    def lr_schedule(progress):
+        # Linear LR decay: start at args.learning_rate, go to 0
+        return args.learning_rate * progress
 
     model = PPO(
-        "MlpPolicy",
+        policy="MlpPolicy",
         env=train_env,
-        learning_rate=args.learning_rate,
+
+        learning_rate=lr_schedule,
+
         n_steps=args.n_steps,
         batch_size=args.batch_size,
         n_epochs=args.n_epochs,
         gamma=args.gamma,
         gae_lambda=0.95,
         clip_range=0.2,
-        ent_coef=0.01,
+
+        ent_coef=0.03,         # encourages exploration
         vf_coef=0.5,
         max_grad_norm=0.5,
+
         tensorboard_log=tb_dir,
-        policy_kwargs=dict(net_arch=[128, 128, 64]),
         verbose=1,
+
+        policy_kwargs=dict(
+            net_arch=[256, 256]   # robust for financial data
+        ),
+
         seed=42,
         device="auto"
     )
+
     return model
 
 
@@ -233,7 +248,7 @@ def evaluate_model(model, test_df, args):
     for _ in range(episodes):
         obs, info = test_env.reset()
         done = False
-        total_r = 0
+        total_r = 0.0
 
         while not done:
             action, _ = model.predict(obs, deterministic=True)
@@ -241,7 +256,6 @@ def evaluate_model(model, test_df, args):
             total_r += reward
             done = terminated or truncated
 
-            # Count actions
             a_int = int(action)
             if a_int in action_counts:
                 action_counts[a_int] += 1
@@ -269,7 +283,7 @@ def evaluate_model(model, test_df, args):
 
 def append_results(args, eval_stats, model_path):
     """Append summary line to logs/single_agent/results.csv."""
-    
+
     os.makedirs("logs/single_agent", exist_ok=True)
     csv_path = "logs/single_agent/results.csv"
 
@@ -335,23 +349,17 @@ def append_results_to_csv(args, eval_stats, save_path):
 
 def main():
 
-    # Parse CLI arguments
     args = parse_arguments()
 
-    # Prepare folder structure for this run
     timestamp, run_dir, tb_dir, model_dir = create_run_directories(args)
 
-    # Load + split data
     df = load_data(args)
     train_df, val_df, test_df = split_data(df, args.train_ratio, args.val_ratio)
 
-    # Create train + validation environments
     train_env, val_env = create_environments(train_df, val_df, args, run_dir)
 
-    # Build PPO model
     model = create_ppo_model(train_env, tb_dir, args)
 
-    # Validation callback (best model tracking)
     eval_callback = EvalCallback(
         val_env,
         best_model_save_path=f"{run_dir}/",
@@ -361,29 +369,23 @@ def main():
         verbose=1
     )
 
-    # Train PPO model
     model.learn(
         total_timesteps=args.total_timesteps,
         callback=eval_callback,
         progress_bar=True
     )
 
-    # Save final trained model
     model_name = f"{args.symbol}_{args.timeframe}_final"
     model_path = f"{model_dir}/{model_name}"
     model.save(model_path)
 
-    # Save config for reproducibility
     with open(f"{run_dir}/config.json", "w") as f:
         json.dump(vars(args), f, indent=4)
 
-    # Evaluate model on unseen test set
     eval_stats = evaluate_model(model, test_df, args)
 
-    # Append to simple global CSV
     append_results_to_csv(args, eval_stats, model_path)
 
-    # Print metrics in a stable format
     final_equity = args.initial_balance + eval_stats["mean_pnl"]
     print("\n====== EVALUATION SUMMARY ======")
     print(f"Final equity  : {final_equity:.2f}")
@@ -393,11 +395,9 @@ def main():
     print(f"Max drawdown  : {eval_stats['mean_max_dd'] * 100:.2f}%")
     print("================================\n")
 
-    # Save evaluation results (JSON)
     with open(f"{run_dir}/eval_results.json", "w") as f:
         json.dump(eval_stats, f, indent=4)
 
-    # Append detailed summary line into logs/single_agent/results.csv
     append_results(args, eval_stats, model_path)
 
     print("🎉 Training complete!")

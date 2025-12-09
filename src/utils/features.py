@@ -2,27 +2,24 @@ import pandas as pd
 import numpy as np
 import os
 
+
 def generate_log_returns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Adds log returns to dataframe.
-    """
+    """Adds log returns to dataframe."""
     df = df.copy()
     df["log_return"] = np.log(df["close"] / df["close"].shift(1))
     return df
 
+
 def add_ema(df: pd.DataFrame, spans=[10, 50]) -> pd.DataFrame:
-    """
-    Adds EMA indicators.
-    """
+    """Adds EMA indicators."""
     df = df.copy()
     for span in spans:
         df[f"EMA_{span}"] = df["close"].ewm(span=span, adjust=False).mean()
     return df
 
+
 def add_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
-    """
-    Adds RSI indicator.
-    """
+    """Adds RSI indicator."""
     df = df.copy()
     delta = df["close"].diff()
 
@@ -37,10 +34,9 @@ def add_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
 
     return df
 
+
 def add_rolling_volatility(df: pd.DataFrame, period: int = 20) -> pd.DataFrame:
-    """
-    Adds rolling volatility using std(log_return).
-    """
+    """Adds rolling volatility using std(log_return)."""
     df = df.copy()
     if "log_return" not in df.columns:
         raise ValueError("log_return column required to compute volatility.")
@@ -48,9 +44,10 @@ def add_rolling_volatility(df: pd.DataFrame, period: int = 20) -> pd.DataFrame:
     df[f"volatility_{period}"] = df["log_return"].rolling(window=period).std()
     return df
 
-def compute_atr(df, period=14):
+
+def compute_atr(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     """
-    Computes ATR(14).
+    Computes ATR(14) using standard True Range.
     """
     df = df.copy()
 
@@ -68,60 +65,35 @@ def compute_atr(df, period=14):
 
     return df
 
-# ============================================================
-# NEW: ATR percentage + normalized ATR percentage
-# ============================================================
-
-def add_atr_percentage(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Adds ATR percentage features:
-    ATR_pct      = ATR / close
-    ATR_pct_norm = z-score normalized ATR_pct
-    """
-    df = df.copy()
-
-    if "ATR_14" not in df.columns:
-        raise ValueError("ATR_14 missing, compute_atr must be called first.")
-
-    # ATR percentage
-    df["ATR_pct"] = df["ATR_14"] / df["close"]
-
-    # Clip extremes (0.000001 – 1)
-    df["ATR_pct"] = df["ATR_pct"].clip(lower=1e-6, upper=1.0)
-
-    # Rolling normalization
-    rolling_mean = df["ATR_pct"].rolling(window=200).mean()
-    rolling_std = df["ATR_pct"].rolling(window=200).std()
-
-    df["ATR_pct_norm"] = (df["ATR_pct"] - rolling_mean) / (rolling_std + 1e-8)
-    df["ATR_pct_norm"] = df["ATR_pct_norm"].fillna(0)
-
-    return df
-
-# ============================================================
 
 def normalize_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Normalizes all features after 'volume' using z-score.
-    Does NOT normalize ATR_pct (we already normalize manually).
+
+    This will automatically create:
+        - log_return_norm
+        - EMA_10_norm, EMA_50_norm
+        - RSI_14_norm
+        - volatility_20_norm
+        - true_range_norm
+        - ATR_14_norm
+
+    We do NOT create ATR_pct or ATR_pct_norm anymore.
     """
     df = df.copy()
     if "volume" not in df.columns:
         raise ValueError("'volume' column not found.")
-    
+
     start_idx = df.columns.get_loc("volume") + 1
     feature_cols = df.columns[start_idx:]
 
     for col in feature_cols:
-        if col in ["ATR_pct", "ATR_pct_norm"]:
-            continue  # Do NOT z-normalize ATR_pct again
         mean = df[col].mean()
         std = df[col].std()
         df[f"{col}_norm"] = (df[col] - mean) / (std + 1e-8)
 
     return df
 
-# ============================================================
 
 def clean_features(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -140,15 +112,19 @@ def clean_features(df: pd.DataFrame) -> pd.DataFrame:
         mean = df[col].mean()
         std = df[col].std()
         if std > 0:
-            df[col] = df[col].clip(mean - 10*std, mean + 10*std)
+            df[col] = df[col].clip(mean - 10 * std, mean + 10 * std)
 
     return df
 
-def save_feature_dataset(df: pd.DataFrame, symbol: str, timeframe: str,
-                         output_dir: str = "data/processed", file_format: str = "parquet"):
-    """
-    Saves features to disk.
-    """
+
+def save_feature_dataset(
+    df: pd.DataFrame,
+    symbol: str,
+    timeframe: str,
+    output_dir: str = "data/processed",
+    file_format: str = "parquet"
+):
+    """Saves features to disk."""
     os.makedirs(output_dir, exist_ok=True)
 
     symbol_clean = symbol.replace("/", "")
@@ -162,11 +138,18 @@ def save_feature_dataset(df: pd.DataFrame, symbol: str, timeframe: str,
 
     print(f"Features saved to: {filepath}")
 
-# ============================================================
 
 def generate_all_features(df: pd.DataFrame, filename: str, config: dict) -> pd.DataFrame:
     """
-    Full feature engineering pipeline.
+    Full feature engineering pipeline:
+
+    - log_return
+    - EMA(10,50)
+    - RSI(14)
+    - volatility_20
+    - true_range
+    - ATR_14
+    - *_norm columns (including ATR_14_norm)
     """
     import os
     base = os.path.basename(filename).replace(".parquet", "").replace(".csv", "")
@@ -182,12 +165,7 @@ def generate_all_features(df: pd.DataFrame, filename: str, config: dict) -> pd.D
     df = add_rolling_volatility(df, period=20)
     df = compute_atr(df, period=14)
 
-    # NEW ATR percentage feature
-    df = add_atr_percentage(df)
-
-    # Z-normalize everything except ATR_pct (already normalized)
     df = normalize_features(df)
-
     df = clean_features(df)
 
     save_feature_dataset(
@@ -200,7 +178,6 @@ def generate_all_features(df: pd.DataFrame, filename: str, config: dict) -> pd.D
 
     return df
 
-# ============================================================
 
 def inspect_outliers(df: pd.DataFrame, threshold: float = 3.0) -> pd.DataFrame:
     """
